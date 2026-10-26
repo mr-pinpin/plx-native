@@ -1,5 +1,8 @@
 # PlxNative
 
+> **PinPin fork:** optional account-free home-network mode is being developed in this repository. See [local server setup](docs/local-server.md). Upstream PlxNative remains credited below.
+
+
 A fast, unofficial [Plex](https://www.plex.tv/) client for LG webOS televisions. Native, not a web
 page — the interface is drawn straight on the GPU at 60 fps, and video plays on the TV's own decoder.
 

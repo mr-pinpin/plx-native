@@ -52,7 +52,7 @@ on:
         type: string
         default: ''
       telemetry:
-        description: 'Which telemetry credential pair to compile in — production or development.'
+        description: 'Which telemetry credential pair to compile in — production, development, or none (no external telemetry).'
         type: string
         required: true
       artifact:
@@ -104,7 +104,7 @@ on:
         default: true
     secrets:
       SENTRY_AUTH_TOKEN:
-        required: true
+        required: false
     outputs:
       ipk:
         description: Path to the built .ipk inside the runner's workspace (pkg/*.ipk).
@@ -132,8 +132,8 @@ jobs:
             *) echo "::error::flavor must be stable, debug, or nightly, got '$FLAVOR'"; exit 1 ;;
           esac
           case "$TELEMETRY" in
-            production|development) ;;
-            *) echo "::error::telemetry must be production or development, got '$TELEMETRY'"; exit 1 ;;
+            production|development|none) ;;
+            *) echo "::error::telemetry must be production, development, or none, got '$TELEMETRY'"; exit 1 ;;
           esac
           # A manifest is keyed to the app id it was generated for, and only two installs have a
           # Homebrew Channel listing: stable (the webosbrew catalogue's) and nightly (the
@@ -311,12 +311,24 @@ jobs:
             echo "telemetry fingerprints (sha256, first 16):"
             printf '  sentry  %s\n' "$(printf %s "$PLX_SENTRY_DSN"  | sha256sum | cut -c1-16)"
             printf '  posthog %s\n' "$(printf %s "$PLX_POSTHOG_KEY" | sha256sum | cut -c1-16)"
-          else
+          elif [ "$TELEMETRY" = development ]; then
             [ -n "$PLX_SENTRY_DSN_DEV" ] || { echo '::error::PLX_SENTRY_DSN_DEV is required for a development-telemetry build.'; exit 1; }
             [ -n "$PLX_POSTHOG_KEY_DEV" ] || { echo '::error::PLX_POSTHOG_KEY_DEV is required for a development-telemetry build.'; exit 1; }
             [ -z "$PLX_SENTRY_DSN$PLX_POSTHOG_KEY" ] || { echo '::error::production telemetry is present in a development-telemetry build.'; exit 1; }
             grep -q 'tel:' pkg/.build-config
             python3 -c 'import os; b=open("pkg/plxnative","rb").read(); assert os.environ["PLX_SENTRY_DSN_DEV"].encode() in b; assert os.environ["PLX_POSTHOG_KEY_DEV"].encode() in b'
+          else
+            # Explicit account-free builds compile neither credential pair. Inspect the shipped
+            # bytes too: empty runner variables alone cannot detect a stale configured binary.
+            [ -z "$PLX_SENTRY_DSN$PLX_POSTHOG_KEY$PLX_SENTRY_DSN_DEV$PLX_POSTHOG_KEY_DEV" ] \
+              || { echo '::error::telemetry credentials are present in a telemetry:none build'; exit 1; }
+            python3 - <<'PYEOF'
+          import pathlib, re
+          binary = pathlib.Path("pkg/plxnative").read_bytes()
+          assert not re.search(rb"https?://[^\s\x00]+@[^\s\x00]*sentry\.io", binary), "Sentry credential endpoint in telemetry:none binary"
+          assert not re.search(rb"https?://[^\s\x00]*posthog\.com", binary), "PostHog endpoint in telemetry:none binary"
+          PYEOF
+            echo "| telemetry explicitly disabled; no credential endpoints in the binary | pass |" >> pkg/gates.md
           fi
           # ...and carry the stamp to the caller's downstream jobs under a NON-HIDDEN name:
           # upload-artifact silently drops dotfiles, so `pkg/.build-config` would never arrive and
@@ -355,6 +367,7 @@ jobs:
         # `upload-debug-files: false` (a nightly's dry run on a pull request only) skips the token
         # guard and the upload and keeps `debug-files check`, which needs no token and is the part
         # that proves the object is usable.
+        # telemetry: none also skips only the external upload, retaining symbol usability checks.
         env:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
           SENTRY_ORG: ${{ vars.SENTRY_ORG || 'gleb-linnik' }}
@@ -362,7 +375,7 @@ jobs:
           TELEMETRY: ${{ inputs.telemetry }}
           UPLOAD: ${{ inputs.upload-debug-files }}
         run: |
-          if [ "$UPLOAD" = true ]; then
+          if [ "$TELEMETRY" != none ] && [ "$UPLOAD" = true ]; then
             if [ -z "$SENTRY_AUTH_TOKEN" ]; then
               echo "::error::SENTRY_AUTH_TOKEN is not set — refusing to ship unsymbolicatable crash reports."
               exit 1
@@ -382,8 +395,8 @@ jobs:
           npm ci --prefix tools
           SENTRY_CLI="$PWD/tools/node_modules/.bin/sentry-cli" \
             python3 ci/check-debug-files.py pkg/plxnative.debug pkg/symbols/*.debug
-          if [ "$UPLOAD" != true ]; then
-            echo "Skipping the Sentry upload: upload-debug-files is '$UPLOAD' (a pull request's nightly dry run)."
+          if [ "$UPLOAD" != true ] || [ "$TELEMETRY" = none ]; then
+            echo "Skipping the Sentry upload: telemetry='$TELEMETRY', upload-debug-files='$UPLOAD'."
             exit 0
           fi
           tools/node_modules/.bin/sentry-cli debug-files upload \

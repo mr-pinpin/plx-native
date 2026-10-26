@@ -739,6 +739,7 @@ FW_EXTRA = {
     "4.10.2": "what the dev television itself reports (docs/webos5-port.md)",
     "6.5.2": "the reviewer's set in issue #22",
     "10.3.1": "the rented Cloud Lab set (docs/webos10-resource-allocation.md)",
+    "10.3.2": "the PinPin OLED55A3RLA native handshake (docs/local-server.md)",
 }
 
 

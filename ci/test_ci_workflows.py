@@ -4,8 +4,8 @@
 * the site film refreshes after a stable release only, never blocks one, and holds its one write token in `publish` (`SiteVideoRelease`);
 * `cache-cleanup.yml` runs on `pull_request_target`, which is safe only while it never checks out
   or runs pull request code and holds nothing but `actions: write`;
-* the nightly's and the release candidate's Sentry debug-file upload is skipped on a pull
-  request's dry run and nowhere else (a release, the schedule and a dispatched dry run keep it);
+* telemetry:none skips external Sentry upload after symbol checks; configured nightly builds
+  skip uploads on pull request dry runs, while configured production/development modes stay strict;
 * the tests against the bundled FFmpeg and libass run in a job of their own, beside the replays,
   and still run;
 * the host FFmpeg and libass builds in the simulator jobs are CACHED where the build scripts really
@@ -31,6 +31,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -83,6 +84,57 @@ class CacheCleanup(unittest.TestCase):
         self.assertIn("--delete", body)
 
 
+class TelemetryNone(unittest.TestCase):
+    """An explicit private-fork mode, without weakening the configured upstream modes."""
+
+    def test_fork_callers_use_the_shared_pipeline_without_telemetry(self):
+        for name in ("release.yml", "rc.yml"):
+            build = job_body(name, "build")
+            self.assertIn("uses: ./.github/workflows/build-package.yml", build)
+            self.assertIn("telemetry: none", build)
+            self.assertIn("source-asset: true", build)
+            self.assertIn("fwcompat: true", build)
+        build = code("build-package.yml")
+        self.assertIn("production|development|none) ;;", build)
+        self.assertRegex(build, r"SENTRY_AUTH_TOKEN:\n        required: false")
+        for name in ("PLX_SENTRY_DSN", "PLX_POSTHOG_KEY", "PLX_SENTRY_DSN_DEV", "PLX_POSTHOG_KEY_DEV"):
+            self.assertRegex(build, rf"{name}: \$\{{\{{ inputs.telemetry == '(production|development)' && vars.{name} \|\| '' \}}\}}")
+
+    def test_none_preserves_symbol_checks_before_skipping_external_upload(self):
+        build = code("build-package.yml")
+        step = build[build.index("Upload debug files to Sentry"):build.index("ELF + packaging assertions")]
+        self.assertIn('if [ "$TELEMETRY" != none ] && [ "$UPLOAD" = true ]; then', step)
+        skip = 'if [ "$UPLOAD" != true ] || [ "$TELEMETRY" = none ]; then'
+        self.assertLess(step.index("ci/check-debug-files.py"), step.index(skip))
+        self.assertLess(step.index(skip), step.index("debug-files upload"))
+        self.assertIn('[ -n "$PLX_SENTRY_DSN" ]', build)
+        self.assertIn('[ -n "$PLX_POSTHOG_KEY" ]', build)
+        self.assertIn('[ -n "$PLX_SENTRY_DSN_DEV" ]', build)
+        self.assertIn('[ -n "$PLX_POSTHOG_KEY_DEV" ]', build)
+
+    def test_none_binary_gate_rejects_stale_credential_endpoints(self):
+        build = text("build-package.yml")
+        start = build.index('            # Explicit account-free builds')
+        end = build.index('          fi\n          # ...and carry the stamp', start)
+        # YAML block indentation is removed by the runner, including the Python heredoc body.
+        script = "\n".join(line[10:] if line.startswith("          ") else line
+                           for line in build[start:end].splitlines())
+        env = dict(os.environ, **{name: "" for name in
+                   ("PLX_SENTRY_DSN", "PLX_POSTHOG_KEY", "PLX_SENTRY_DSN_DEV", "PLX_POSTHOG_KEY_DEV")})
+        with tempfile.TemporaryDirectory() as directory:
+            package = Path(directory) / "pkg"
+            package.mkdir()
+            binary = package / "plxnative"
+            def run(payload, environment=env):
+                binary.write_bytes(payload)
+                return subprocess.run(["bash", "-euo", "pipefail", "-c", script], cwd=directory,
+                                      env=environment, capture_output=True)
+            self.assertEqual(run(b"ELF unconfigured binary").returncode, 0)
+            self.assertNotEqual(run(b"https://key@o1.ingest.de.sentry.io/2").returncode, 0)
+            self.assertNotEqual(run(b"https://eu.i.posthog.com/i/v0/e/").returncode, 0)
+            self.assertNotEqual(run(b"ELF", dict(env, PLX_POSTHOG_KEY="stale-key")).returncode, 0)
+
+
 class SentryUpload(unittest.TestCase):
     def test_only_a_pull_requests_nightly_run_skips_the_upload(self):
         nightly = code("nightly.yml")
@@ -90,7 +142,7 @@ class SentryUpload(unittest.TestCase):
                          ["${{ github.event_name != 'pull_request' }}"])
         self.assertNotIn("upload-debug-files", code("release.yml"))
 
-    def test_only_a_pull_requests_candidate_run_skips_the_upload(self):
+    def test_candidate_keeps_the_dry_run_upload_guard(self):
         self.assertEqual(re.findall(r"upload-debug-files: (.*)", code("rc.yml")),
                          ["${{ github.event_name != 'pull_request' }}"])
 

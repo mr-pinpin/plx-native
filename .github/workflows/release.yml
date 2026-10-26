@@ -363,10 +363,8 @@ jobs:
       # package deliberately does not write that released asset name) — a loud failure naming a
       # checksum rather than a flavour.
       flavor: stable
-      # The PRODUCTION telemetry endpoints, compiled in from `vars` rather than `secrets`
-      # DELIBERATELY — see build-package.yml's own comment on the point. Only SENTRY_AUTH_TOKEN,
-      # passed as a secret below, can read or delete the project.
-      telemetry: production
+      # This household fork uses no external telemetry accounts; all package/source gates remain.
+      telemetry: none
       artifact: release-assets
       homebrew-manifest: true
       source-asset: true
@@ -374,8 +372,6 @@ jobs:
       # plxnative-storage too (its DT_NEEDED list is ci/expected-dt-needed-storage.txt), so it owes the same
       # gate webosbrew-ipk-verify's per-package verdict does not replace.
       fwcompat: true
-    secrets:
-      SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
 
   publish:
     name: publish release
