@@ -853,7 +853,7 @@ impl SessionInit {
         let mut init = Self::captured_local(saved, Default::default());
         init.authority = BootstrapAuthority::LocalUnavailable { error: error.clone() };
         init.phase = Phase::Error;
-        init.error = error;
+        init.error = plx_platform::i18n::msg::browse_auth_local_configuration_invalid().into();
         init
     }
 
@@ -2254,7 +2254,7 @@ impl SessionMachine {
                     }
                     None if self.state.phase == Phase::Discovering => {
                         self.state.phase = Phase::Error;
-                        self.state.error = "No matching local Plex server was discovered".into();
+                        self.state.error = plx_platform::i18n::msg::browse_auth_local_server_unavailable().into();
                     }
                     _ => {}
                 }

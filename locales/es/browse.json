@@ -278,5 +278,7 @@
   "browse.clock.notice_year": "La hora del televisor parece incorrecta ({year}). Conectado con la clave guardada.",
   "browse.clock.notice": "La hora del televisor parece incorrecta. Conectado con la clave guardada.",
   "browse.clock.no_key": "La hora del televisor parece incorrecta. Conecta el televisor a internet una vez e inténtalo de nuevo.",
-  "browse.clock.key_changed": "La clave de tu servidor ha cambiado. Conecta el televisor a internet una vez para que la app pueda comprobarla de nuevo."
+  "browse.clock.key_changed": "La clave de tu servidor ha cambiado. Conecta el televisor a internet una vez para que la app pueda comprobarla de nuevo.",
+  "browse.auth.local_server_unavailable": "No se encontró el servidor Plex local configurado.",
+  "browse.auth.local_configuration_invalid": "La configuración del servidor local no está disponible o no es válida."
 }

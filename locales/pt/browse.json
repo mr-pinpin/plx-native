@@ -278,5 +278,7 @@
   "browse.clock.notice_year": "O relógio do televisor parece errado ({year}). Ligado com a chave memorizada.",
   "browse.clock.notice": "O relógio do televisor parece errado. Ligado com a chave memorizada.",
   "browse.clock.no_key": "O relógio deste televisor parece errado. Ligue o televisor à Internet uma vez e tente novamente.",
-  "browse.clock.key_changed": "A chave do seu servidor mudou. Ligue o televisor à Internet uma vez para que a app a possa verificar novamente."
+  "browse.clock.key_changed": "A chave do seu servidor mudou. Ligue o televisor à Internet uma vez para que a app a possa verificar novamente.",
+  "browse.auth.local_server_unavailable": "O servidor Plex local configurado não foi encontrado.",
+  "browse.auth.local_configuration_invalid": "A configuração do servidor local está indisponível ou é inválida."
 }

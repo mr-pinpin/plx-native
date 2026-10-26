@@ -58,3 +58,6 @@ filesystem permissions, media plane or LAN service availability.
 ## Device evidence for this fork
 
 On 2026-10-26, the television's native control handshake reported webOS 10.3.2 and system information identified OLED55A3RLA with a DVB receiver. The installed upstream 0.9.0 application opened its account-link screen, as observed by the owner. These observations establish the device and original native application; they do not establish playback of this fork. A direct request from the television reached the Mini's unclaimed server, and a local broadcast discovery probe identified that same server. Private device addresses and identifiers are kept outside this repository.
+
+The local-mode error messages use the shared localization catalog. The new
+non-English translations are AI drafts awaiting native-speaker review.
