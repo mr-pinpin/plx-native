@@ -123,6 +123,7 @@ pub struct Client {
     //
     // What "fixed" was actually protecting is stability ACROSS RUNS, and the persisted UUID gives
     // that too, per install rather than per binary.
+    anonymous_local: std::sync::atomic::AtomicBool,
     pub(super) client_id: String, // X-Plex-Client-Identifier — stable device id (NEVER per-item)
     pub(super) product: String,   // "PlxNative"
     pub(super) version: String,   // "0.1.0"
@@ -281,6 +282,7 @@ impl Client {
             origin,
             resolve_pin: None,
             token: RwLock::new(token.to_owned()),
+            anonymous_local: std::sync::atomic::AtomicBool::new(false),
             client_id: client_id.to_owned(),
             product: super::identity::PRODUCT.into(),
             version: super::identity::version().into(),
@@ -359,6 +361,7 @@ impl Client {
     /// generation so token-baked caches (the poster key memo) invalidate, and — only across a
     /// revocation edge (live → blank, blank → live) — the [`Client::grant_epoch`].
     pub fn set_token(&self, token: &str) {
+        self.anonymous_local.store(false, Relaxed);
         if let Ok(mut g) = self.token.write() {
             if g.is_empty() != token.is_empty() {
                 self.grant_epoch.store(next_gen(), Relaxed);
@@ -844,11 +847,15 @@ impl Client {
             .map(|e| e.media_container)
     }
 
+    pub(super) fn enable_anonymous_local(&self) {
+        self.anonymous_local.store(true, Relaxed);
+    }
+
     /// THE token choke point. Appends `X-Plex-Token=…` with the right separator.
     pub(super) fn with_token(&self, path: &str) -> String {
         let sep = if path.contains('?') { '&' } else { '?' };
         let tok = self.token.read().map(|g| g.clone()).unwrap_or_default();
-        format!("{path}{sep}X-Plex-Token={tok}")
+        if tok.is_empty() && self.anonymous_local.load(Relaxed) { path.to_owned() } else { format!("{path}{sep}X-Plex-Token={tok}") }
     }
 }
 
@@ -1000,6 +1007,17 @@ mod tests {
             token,
             "cid-42",
         )
+    }
+
+    #[test]
+    fn anonymous_local_requests_do_not_carry_an_empty_plex_token() {
+        let client = a_client("local-server", "");
+        client.enable_anonymous_local();
+        assert_eq!(client.with_token("/library/sections"), "/library/sections");
+        assert_eq!(client.with_token("/library/sections?includeMeta=1"), "/library/sections?includeMeta=1");
+        client.set_token("");
+        assert!(client.with_token("/library/sections").contains("X-Plex-Token="),
+            "revoking a client must revoke anonymous capability too");
     }
 
     /// PR #104 review: `encode_link`/`decode_link` and `encode_ip`/`decode_ip` are the ONE

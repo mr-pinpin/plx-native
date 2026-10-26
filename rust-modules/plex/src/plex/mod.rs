@@ -119,6 +119,7 @@ pub use origin::{plex_direct_literal, url_host, CredentialPolicy, Origin, Resolv
 // `register`, `set_current` and `ServerId` are the multi-server additions.
 #[allow(unused_imports)]
 pub use servers::{
+    register_anonymous_local_with_client_id, discover_anonymous_local,
     client, client_for, client_opt, commit_if_current, commit_reachability_if_current,
     count as server_count, current as current_server, describe as describe_server,
     describe_name as describe_server_name, facts as server_facts, id_space_exhausted, ids as server_ids, install,

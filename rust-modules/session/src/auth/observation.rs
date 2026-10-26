@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize)]
 pub enum Observation {
+    LocalServer { epoch: u64, server: Option<plx_plex::plex::session::ServerRef> },
     Login(LoginProgress),
     Registry(RegistryProgress),
     HomeRoster(HomeRosterProgress),
@@ -33,6 +34,7 @@ impl Observation {
     pub fn write(&self, w: &mut plx_machine::machine::Canon) {
         use owner::{write_profile, write_server, write_sources, write_tile, write_user};
         match self {
+            Self::LocalServer { epoch, server } => { w.u8(7).u64(*epoch); w.option(server.as_ref(), write_server); }
             Self::Login(progress) => {
                 w.u8(0);
                 match progress {
@@ -146,6 +148,7 @@ impl Observation {
     pub fn matches_request(&self, pending: &owner::Pending, terminal: bool) -> bool {
         use owner::{SessionOp, StreamPhase};
         let (epoch, expected, compatible) = match self {
+            Self::LocalServer { epoch, .. } => (*epoch, None, pending.key.op == SessionOp::LocalDiscovery && terminal),
             Self::Login(p) => {
                 let login = matches!(pending.key.op, SessionOp::Login | SessionOp::Rediscover);
                 match p {
@@ -192,6 +195,7 @@ impl Observation {
 
     pub fn from_transport(value: AuthProgress) -> (Self, Option<ClientLifecycle>) {
         let observation = match value {
+            AuthProgress::LocalServer { epoch, server } => Self::LocalServer { epoch, server },
             AuthProgress::Login(p) => Self::Login(p),
             AuthProgress::Registry(p) => Self::Registry(p),
             AuthProgress::HomeRoster(p) => Self::HomeRoster(p),

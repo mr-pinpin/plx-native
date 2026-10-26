@@ -243,6 +243,21 @@ mod relaunch_tap_tests {
 
 #[cfg(test)]
 mod seam_order_tests {
+    // SDL/GL boot cannot run in host tests. Guard the actual application routing seam:
+    // Home must follow the committed Ready handoff and catalog activation, never config shape.
+    #[test]
+    fn local_boot_consumes_ready_and_activates_catalog_before_home() {
+        let source = include_str!("boot.rs");
+        let branch = source.split_once(concat!("} else if ", "local_primary.is_some() {")).unwrap().1
+            .split_once(concat!("} else if ", "!dev_token.is_empty() {")).unwrap().0;
+        let ready = branch.find("bridge.take_session_ready()").expect("consume local Ready before leaving Login");
+        let install = branch.find("install_pms_owned(").expect("activate local catalog and discovery");
+        let outcomes = branch.find("execute_endpoint_outcomes(").expect("deliver endpoint handoff");
+        let home = branch.find("BootTo::Home").unwrap();
+        assert!(ready < install && install < outcomes && outcomes < home);
+        assert!(branch.contains("else { BootTo::Login }"), "pending resource commit must stay on Login");
+    }
+
     /// `plx_plex` reports the version it is handed (`plex::identity::set_version`) and, in a
     /// shipping build, panics when asked for it earlier, so the hand-in has to be the first thing
     /// the one entry point does: nothing before it can build a header or a `User-Agent`. It also
@@ -1588,6 +1603,12 @@ pub(crate) unsafe fn construct(
     }
     #[cfg(not(test))]
     plx_platform::i18n::initialize(session.language, controlled);
+    let (local_primary, local_error) = if controlled { (None, None) } else {
+        match plx_plex::plex::session::load_local_server_config() {
+            Ok(primary) => (primary, None),
+            Err(error) => { log(&format!("boot: local server configuration refused: {error}")); (None, Some(error)) }
+        }
+    };
     let forced_login = !controlled && crate::dev::scenarios::login_forced();
     let dev_primary = (!forced_login && !dev_token.is_empty()).then(|| {
         let origin = crate::dev::scenarios::pms_origin()
@@ -1598,11 +1619,16 @@ pub(crate) unsafe fn construct(
             tier: Some(plx_plex::plex::probe::configured_tier(origin.host())), ..Default::default()
         }
     });
-    let session_init = match &initial {
+    let mut session_init = match &initial {
         Some(initial) => initial.session.clone(),
         None => captured_session_for_boot(session.clone(), dev_primary,
             captured_dev_sources(&dev_servers.unwrap_or_default())),
     };
+    if let Some(primary) = local_primary.clone() {
+        session_init = plx_session::auth::SessionInit::captured_local(session.clone(), primary);
+    } else if let Some(error) = local_error.clone() {
+        session_init = plx_session::auth::SessionInit::captured_local_unavailable(session.clone(), error);
+    }
     let mut bridge = if controlled {
         super::bridge::Bridge::controlled_home(plx_base::diag::heartbeat::now_us,
             initial.as_ref().expect("controlled initialization"), &mt, preflight.replay())
@@ -1632,6 +1658,19 @@ pub(crate) unsafe fn construct(
         #[cfg(feature = "devtriggers")]
         log("boot: /tmp/plxnative-login — starting QR login");
         BootTo::Login
+    } else if local_error.is_some() {
+        log("boot: local configuration is unavailable — cloud sign-in remains disabled");
+        BootTo::Login
+    } else if local_primary.is_some() {
+        super::bridge::execute_session_command(pages, plx_session::auth::SessionCmd::ActivateLocalBootstrap);
+        pages.frame_with(bridge, plx_machine::machine::Tick::default(), Vec::new(), Vec::new(), rec, false);
+        log("boot: explicit anonymous local server — no Plex account or cloud discovery");
+        if let Some(ready) = bridge.take_session_ready() {
+            let endpoints = install_pms_owned(bridge, &ready.origin, &ready.address,
+                &ready.token, ready.tier, ready.pin.as_ref(), &ready.install);
+            super::bridge::execute_endpoint_outcomes(pages, endpoints);
+            BootTo::Home
+        } else { BootTo::Login }
     } else if !dev_token.is_empty() {
         // `Origin::http` names the assumption out loud: the host and port compiled into the
         // C shim are a plaintext address, with no scheme to read off them.

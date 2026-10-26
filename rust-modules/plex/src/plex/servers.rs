@@ -1113,6 +1113,71 @@ pub fn register_pinned_with_client_id_and_policy(
     register_lazy(machine_id, origin, token, pin, connection, policy, &|| client_id.to_owned())
 }
 
+/// Plex GDM server discovery, run only by the Session worker. The expected PMS
+/// identifier is supplied by the household configuration; another server cannot
+/// silently replace it. See python-plexapi's plexapi/gdm.py for the wire protocol.
+pub fn discover_anonymous_local(primary: &super::session::ServerRef, live: impl Fn() -> bool)
+    -> Option<super::session::ServerRef> {
+    use std::net::UdpSocket;
+    use std::time::{Duration, Instant};
+    if primary.machine_id.is_empty() || !live() { return None; }
+    let socket = UdpSocket::bind(("0.0.0.0", 0)).ok()?;
+    socket.set_multicast_ttl_v4(1).ok()?;
+    socket.set_broadcast(true).ok()?;
+    // Multicast is Plex's server protocol. Broadcast is an additive LAN fallback
+    // for access points that filter multicast; neither request carries credentials.
+    let message = b"M-SEARCH * HTTP/1.0";
+    let _ = socket.send_to(message, ("239.0.0.250", 32414));
+    let _ = socket.send_to(message, ("255.255.255.255", 32414));
+    if let Ok(address) = primary.address.parse::<std::net::Ipv4Addr>() {
+        let _ = socket.send_to(message, (address, 32414));
+    }
+    let end = Instant::now() + Duration::from_millis(1200);
+    let mut bytes = [0u8; 4096];
+    for _ in 0..64 {
+        if !live() || Instant::now() >= end { break; }
+        socket.set_read_timeout(Some(end.saturating_duration_since(Instant::now()).min(Duration::from_millis(150)))).ok()?;
+        match socket.recv_from(&mut bytes) {
+            Ok((size, peer)) => {
+                if let Some(server) = parse_local_gdm(&bytes[..size], peer.ip(), primary) { return Some(server); }
+            }
+            Err(error) if matches!(error.kind(), std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock) => {}
+            Err(_) => break,
+        }
+    }
+    None
+}
+
+fn parse_local_gdm(bytes: &[u8], peer: std::net::IpAddr, primary: &super::session::ServerRef)
+    -> Option<super::session::ServerRef> {
+    let text = std::str::from_utf8(bytes).ok()?;
+    if !text.lines().next()?.contains("200 OK") { return None; }
+    let header = |name: &str| text.lines().filter_map(|line| line.split_once(':'))
+        .find(|(key, _)| key.trim().eq_ignore_ascii_case(name)).map(|(_, value)| value.trim());
+    if header("Content-Type")? != "plex/media-server"
+        || header("Resource-Identifier")? != primary.machine_id { return None; }
+    let port = header("Port")?.parse::<u16>().ok()?;
+    if port == 0 { return None; }
+    let origin = Origin::http(&peer.to_string(), i32::from(port));
+    if !super::session::anonymous_local_origin(&origin) { return None; }
+    Some(super::session::ServerRef { name: header("Name").unwrap_or(&primary.name).chars().take(80).collect(),
+        machine_id: primary.machine_id.clone(), address: peer.to_string(), port: i64::from(port),
+        origin_url: origin.base(), tier: Some(Location::Local), ..Default::default() })
+}
+
+/// Explicit anonymous local access. No account credentials or plaintext grants are
+/// fabricated, and the normal account policy is unchanged.
+pub fn register_anonymous_local_with_client_id(machine_id: &str, origin: &Origin, client_id: &str,
+    connection: ConnectionFacts) -> Option<ServerId> {
+    if !super::session::anonymous_local_origin(origin) || client_id.is_empty() { return None; }
+    let id = register_lazy(machine_id, origin, "", None, connection,
+        CredentialPolicy::AllowPlaintext, &|| client_id.to_owned());
+    populated(id)?.enable_anonymous_local();
+    #[cfg(not(any(test, feature = "test-support")))]
+    super::serverinfo::refresh(id);
+    Some(id)
+}
+
 fn register_lazy(
     machine_id: &str,
     origin: &Origin,
@@ -2658,5 +2723,49 @@ mod tests {
             facts(c).map(|f| (f.name.as_str(), f.handle.as_str(), f.owned)),
             Some(("nas-loft", "friend", false))
         );
+    }
+}
+
+#[cfg(test)]
+mod anonymous_local_registry_tests {
+    use super::*;
+
+    #[test]
+    fn anonymous_local_gdm_accepts_only_the_configured_server_on_the_lan() {
+        let primary = super::super::session::parse_local_server_config(
+            br#"{"version":1,"machineId":"expected-server","origin":"http://192.168.50.12:32400"}"#).unwrap();
+        let packet = b"HTTP/1.0 200 OK\r\nContent-Type: plex/media-server\r\nResource-Identifier: expected-server\r\nName: Home media\r\nPort: 32400\r\n";
+        let discovered = parse_local_gdm(packet, "192.168.50.99".parse().unwrap(), &primary).unwrap();
+        assert_eq!(discovered.origin_url, "http://192.168.50.99:32400");
+        assert_eq!(discovered.machine_id, "expected-server");
+        assert!(discovered.token.is_empty());
+        assert!(parse_local_gdm(packet, "203.0.113.9".parse().unwrap(), &primary).is_none());
+        let wrong = String::from_utf8_lossy(packet).replace("expected-server", "another-server");
+        assert!(parse_local_gdm(wrong.as_bytes(), "192.168.50.99".parse().unwrap(), &primary).is_none());
+        assert!(discover_anonymous_local(&primary, || false).is_none(), "cancelled work opens no socket");
+    }
+
+    #[test]
+    fn anonymous_local_registry_has_no_account_token_and_rejects_remote_targets() {
+        let _g = plx_base::testlock::serial();
+        reset_for_test();
+        let origin = Origin::http("127.0.0.1", 32400);
+        let id = register_anonymous_local_with_client_id("local-server", &origin, "local-client",
+            ConnectionFacts::new(Some(Location::Local), None)).unwrap();
+        set_current(id);
+        let client = client_for(id).expect("anonymous local server is usable in release mode too");
+        assert!(!client.has_token());
+        assert_eq!(client.with_token("/library/sections"), "/library/sections");
+        let changed = Origin::http("127.0.0.2", 32400);
+        let next = register_anonymous_local_with_client_id("local-server", &changed,
+            "local-client", ConnectionFacts::default()).unwrap();
+        assert_eq!(id, next, "a discovered address change must not duplicate the server");
+        assert_eq!(client_for(next).unwrap().origin(), &changed);
+        assert_eq!(client_for(next).unwrap().with_token("/library/sections"), "/library/sections");
+        revoke_all();
+        assert!(client_opt().is_none(), "local disconnect revokes the anonymous client");
+        assert!(register_anonymous_local_with_client_id("local-server", &Origin::http("203.0.113.9", 32400),
+            "local-client", ConnectionFacts::default()).is_none());
+        reset_for_test();
     }
 }

@@ -44,6 +44,10 @@ pub fn run_session_work(key: owner::SessionWorkKey,
     }
     let epoch = key.epoch;
     match input {
+        owner::SessionWork::LocalDiscovery { primary } => {
+            let server = plx_plex::plex::discover_anonymous_local(&primary, || output.live());
+            output.terminal(AuthProgress::LocalServer { epoch, server });
+        }
         owner::SessionWork::Login { client_id } => login_worker_with_output(epoch, client_id, &ask, output),
         owner::SessionWork::Rediscover { client_id, account_token } =>
             rediscovery_worker_with_output(client_id, account_token, epoch, &ask, output),
@@ -630,6 +634,17 @@ impl ClientLifecycle {
 /// owner permit and (for an endpoint) exact captured Client lifecycle have been validated.
 pub fn execute_session_registry(plan: &owner::RegistryPlan, client_id: &str) -> bool {
     match plan {
+        owner::RegistryPlan::LocalInstall { primary, client_id } => {
+            if !primary.token.is_empty() || !plx_plex::plex::session::anonymous_local_origin(&primary.origin()) { return false; }
+            // Keep legacy synchronous consumers from discovering an account left on disk.
+            // This revokes the in-memory cache only; it neither erases nor impersonates it.
+            plx_plex::plex::session::revoke_cached_session();
+            let connection = plx_plex::plex::ConnectionFacts::new(primary.tier,
+                plx_plex::plex::IpVersion::of_host(&primary.address));
+            let Some(id) = plx_plex::plex::register_anonymous_local_with_client_id(
+                &primary.machine_id, &primary.origin(), client_id, connection) else { return false };
+            plx_plex::plex::set_current(id);
+        }
         owner::RegistryPlan::DevInstall { primary, extras, client_id } => {
             install_captured_registry(&primary.origin(), &primary.address, &primary.token,
                 primary.tier, primary.resolve_pin().as_ref(), extras, Some(client_id));
@@ -801,6 +816,7 @@ pub struct ProfileRosterProgress {
 /// R2A adds the remaining immutable worker observations beside it without changing its variants or
 /// terminal ordering.
 pub enum AuthProgress {
+    LocalServer { epoch: u64, server: Option<plx_plex::plex::session::ServerRef> },
     Login(LoginProgress),
     Registry(RegistryProgress),
     HomeRoster(HomeRosterProgress),

@@ -515,6 +515,69 @@ impl std::fmt::Debug for OpaqueExtensions {
 
 
 /// The full persisted session. Empty fields mean "not logged in yet" for that stage.
+/// Explicit household LAN access, independent of Plex account credentials.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LocalServerConfig {
+    version: u32,
+    #[serde(default)]
+    origin: String,
+    #[serde(default)]
+    name: String,
+    #[serde(default, rename = "machineId")]
+    machine_id: String,
+}
+
+/// Only explicit private-network targets may use anonymous local mode. A `.local`
+/// name is accepted when the device resolver supports it; GDM handles LAN discovery.
+pub fn anonymous_local_origin(origin: &Origin) -> bool {
+    match origin.host().parse::<std::net::IpAddr>() {
+        Ok(std::net::IpAddr::V4(ip)) => ip.is_private() || ip.is_loopback(),
+        Ok(std::net::IpAddr::V6(ip)) => ip.is_unique_local() || ip.is_loopback(),
+        Err(_) => origin.host().ends_with(".local") && origin.host().len() > 6,
+    }
+}
+
+pub fn parse_local_server_config(bytes: &[u8]) -> Result<ServerRef, String> {
+    if bytes.len() > 4096 { return Err("local server configuration exceeds 4096 bytes".into()); }
+    let config: LocalServerConfig = serde_json::from_slice(bytes)
+        .map_err(|_| "invalid local server configuration".to_owned())?;
+    if config.version != 1 || config.name.len() > 80 {
+        return Err("unsupported local server configuration".into());
+    }
+    if config.machine_id.len() > 128 || !config.machine_id.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_') {
+        return Err("invalid local server machine identifier".into());
+    }
+    let origin = if config.origin.is_empty() {
+        if config.machine_id.is_empty() { return Err("local server needs an origin or machine identifier".into()); }
+        None
+    } else {
+        let origin = Origin::parse(&config.origin).ok_or_else(|| "invalid local server origin".to_owned())?;
+        if !anonymous_local_origin(&origin) { return Err("anonymous server must be on the local network".into()); }
+        Some(origin)
+    };
+    Ok(ServerRef { name: config.name, machine_id: config.machine_id,
+        address: origin.as_ref().map(|o| o.host().to_owned()).unwrap_or_default(),
+        port: origin.as_ref().map(|o| i64::from(o.port())).unwrap_or_default(),
+        origin_url: origin.as_ref().map(Origin::base).unwrap_or_default(),
+        tier: Some(Location::Local), ..Default::default() })
+}
+
+/// Device-owned configuration, not a credential/session-file injection. Absence
+/// leaves the original account flow untouched; the file is never packaged.
+pub fn load_local_server_config() -> Result<Option<ServerRef>, String> {
+    use std::io::Read;
+    let path = std::path::PathBuf::from(format!("/media/internal/.{}-local-server.json", plx_base::paths::app_id()));
+    let file = match std::fs::File::open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(_) => return Err("could not read local server configuration".into()),
+    };
+    let mut bytes = Vec::new();
+    file.take(4097).read_to_end(&mut bytes).map_err(|_| "could not read local server configuration".to_owned())?;
+    parse_local_server_config(&bytes).map(Some)
+}
+
 #[derive(Serialize, Deserialize, Default, Clone)]
 pub struct Session {
     /// Install-wide UI language, applied on the next process launch. Absent means System, and
@@ -6225,5 +6288,32 @@ mod server_key_pin_tests {
         plx_base::storage_worker::drain_for_test();
         let _ = peek();
         assert_eq!(plx_net::net::keypin::pin_for_test(&key), None, "the late probe did not repopulate it");
+    }
+}
+
+#[cfg(test)]
+mod anonymous_local_config_tests {
+    use super::*;
+
+    #[test]
+    fn anonymous_local_config_is_explicit_private_and_credential_free() {
+        let server = parse_local_server_config(br#"{"version":1,"origin":"http://192.168.50.12:32400","name":"Home media"}"#).unwrap();
+        assert_eq!(server.address, "192.168.50.12");
+        assert_eq!(server.port, 32400);
+        assert!(server.token.is_empty());
+        assert_eq!(server.tier, Some(Location::Local));
+        assert!(parse_local_server_config(br#"{"version":1,"origin":"http://media-mini.local:32400"}"#).is_ok());
+        let discovery = parse_local_server_config(br#"{"version":1,"machineId":"expected-server"}"#).unwrap();
+        assert_eq!(discovery.machine_id, "expected-server");
+        assert!(discovery.address.is_empty());
+        for bad in [
+            r#"{"version":1,"origin":"http://example.com:32400"}"#,
+            r#"{"version":1,"origin":"http://203.0.113.9:32400"}"#,
+            r#"{"version":2,"origin":"http://127.0.0.1:32400"}"#,
+            r#"{"version":1,"origin":"http://127.0.0.1:32400","token":"invented"}"#,
+        ] { assert!(parse_local_server_config(bad.as_bytes()).is_err(), "accepted {bad}"); }
+        // Merely having a LAN address must never revive a signed-out account session.
+        let saved = Session { server, ..Default::default() };
+        assert!(!saved.can_go_local());
     }
 }

@@ -59,6 +59,7 @@ fn write_op(w: &mut Canon, op: SessionOp) {
         SessionOp::Ready => { w.u8(6); }
         SessionOp::Picker => { w.u8(7); }
         SessionOp::DevBoundary => { w.u8(8); }
+        SessionOp::LocalDiscovery => { w.u8(9); }
     }
 }
 
@@ -109,6 +110,7 @@ pub trait ObservationSink {
 /// Fully captured worker input. No native pointer or closure can be serialized into work.
 #[derive(Clone, Serialize, Deserialize)]
 pub enum SessionWork {
+    LocalDiscovery { primary: plx_plex::plex::session::ServerRef },
     Login { client_id: String },
     Rediscover { client_id: String, account_token: String },
     HomeRoster { client_id: String, account_token: String, expected: Identity },
@@ -124,7 +126,7 @@ impl SessionWork {
     /// What `plex::grant::PlaintextAsk::capture` keys the person's answers by.
     pub fn account_token(&self) -> &str {
         match self {
-            Self::Login { .. } => "",
+            Self::Login { .. } | Self::LocalDiscovery { .. } => "",
             Self::Rediscover { account_token, .. } | Self::HomeRoster { account_token, .. } => account_token,
             Self::ServerRoster { session, .. } | Self::ProfileSwitch { session, .. }
                 | Self::Endpoint { session, .. } => &session.account_token,
@@ -162,6 +164,7 @@ pub struct CredentialPatch {
 #[derive(Clone, Serialize, Deserialize)]
 pub enum Command {
     ActivateDevBootstrap,
+    ActivateLocalBootstrap,
     /// Restore the captured single-user boot authority without re-saving its credentials.
     ResumeStored,
     StartLogin,
@@ -241,6 +244,7 @@ pub enum RosterCommit {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub enum RegistryPlan {
+    LocalInstall { primary: plx_plex::plex::session::ServerRef, client_id: String },
     DevInstall { primary: plx_plex::plex::session::ServerRef, extras: Vec<plx_plex::plex::session::SourceRef>, client_id: String },
     /// Boot picker's avatar client, before any profile is permitted to enter Home.
     Primary { server: plx_plex::plex::session::ServerRef, token: String },
@@ -342,7 +346,7 @@ pub struct CommitPlan {
 /// controller snapshot: unchanged fields remain solely in SessionInit.
 #[derive(Clone, Default, Serialize, Deserialize)]
 pub struct CommitDelta {
-    pub dev: Option<DevCommitDelta>,
+    pub dev: Option<BootstrapCommitDelta>,
     pub credentials: Option<CredentialPatch>,
     pub phase: Option<Phase>,
     pub picker: Option<Picker>,
@@ -360,7 +364,7 @@ pub struct CommitDelta {
 }
 
 #[derive(Clone, Serialize, Deserialize)]
-pub enum DevCommitDelta { Activated, StartAccount { login_req: u32 } }
+pub enum BootstrapCommitDelta { Activated, LocalDisconnected, StartAccount { login_req: u32 } }
 
 /// The picker's read-outs when it has no tiles and cannot get any. Neutral wording, drawn as a
 /// failed read-out on the picker itself (`screens/profiles.rs`), never as a sign-in failure.
@@ -373,6 +377,8 @@ pub fn roster_refused() -> &'static str {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub enum BootstrapAuthority {
+    LocalPms { primary: plx_plex::plex::session::ServerRef },
+    LocalUnavailable { error: String },
     Account { extras: Vec<plx_plex::plex::session::SourceRef> },
     DevPms { primary: plx_plex::plex::session::ServerRef, extras: Vec<plx_plex::plex::session::SourceRef> },
 }
@@ -628,7 +634,7 @@ pub struct ServerLifecycle {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum SessionOp { Login, Rediscover, HomeRoster, ServerRoster, ProfileSwitch, Endpoint(u16), Ready, Picker, DevBoundary }
+pub enum SessionOp { Login, Rediscover, HomeRoster, ServerRoster, ProfileSwitch, Endpoint(u16), Ready, Picker, DevBoundary, LocalDiscovery }
 
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionWorkKey {
@@ -792,7 +798,7 @@ impl SessionInit {
     /// the dev session it never left, or a stored one it can reach. Otherwise BACK is the root
     /// press and the television takes the screen.
     fn dead_end_resumes(&self) -> bool {
-        matches!(self.authority, BootstrapAuthority::DevPms { .. })
+        matches!(self.authority, BootstrapAuthority::DevPms { .. } | BootstrapAuthority::LocalPms { .. } | BootstrapAuthority::LocalUnavailable { .. })
             || self.committed_credentials.merge_into(&self.persisted).can_go_local()
     }
 
@@ -830,6 +836,25 @@ impl SessionInit {
             delete_leftovers: 0, incident: None, incidents_seen: Vec::new(), next_incident: 0,
             link_trouble: false, discovery_retry: None, plaintext: None, signin_account: None,
             switch_refused_for: None }
+    }
+
+    pub fn captured_local(saved: PersistedSession, primary: plx_plex::plex::session::ServerRef) -> Self {
+        let mut init = Self::captured(saved);
+        let clean = CredentialPatch::of(&PersistedSession {
+            client_id: init.persisted.client_id.clone(), ..Default::default()
+        });
+        init.persisted = clean.merge_into(&init.persisted);
+        init.committed_credentials = clean;
+        init.authority = BootstrapAuthority::LocalPms { primary };
+        init
+    }
+
+    pub fn captured_local_unavailable(saved: PersistedSession, error: String) -> Self {
+        let mut init = Self::captured_local(saved, Default::default());
+        init.authority = BootstrapAuthority::LocalUnavailable { error: error.clone() };
+        init.phase = Phase::Error;
+        init.error = error;
+        init
     }
 
     pub fn captured_boot(saved: PersistedSession, primary: Option<plx_plex::plex::session::ServerRef>,
@@ -955,6 +980,8 @@ impl LogicalState for SessionInit {
             .str(&self.disk_identity.profile_uuid);
         match &self.authority {
             BootstrapAuthority::Account { extras } => { w.u8(0); write_sources(w, extras); }
+            BootstrapAuthority::LocalPms { primary } => { w.u8(2); write_server(w, primary); }
+            BootstrapAuthority::LocalUnavailable { error } => { w.u8(3).str(error); }
             BootstrapAuthority::DevPms { primary, extras } => {
                 w.u8(1); write_server(w, primary); write_sources(w, extras);
             }
@@ -1023,8 +1050,9 @@ impl LogicalState for SessionInit {
             w.option(commit.receipt.as_ref(), |w, receipt| receipt.write(w));
             let delta = &commit.delta;
             w.option(delta.dev.as_ref(), |w, dev| { match dev {
-                DevCommitDelta::Activated => { w.u8(0); }
-                DevCommitDelta::StartAccount { login_req } => { w.u8(1).u32(*login_req); }
+                BootstrapCommitDelta::Activated => { w.u8(0); }
+                BootstrapCommitDelta::LocalDisconnected => { w.u8(2); }
+                BootstrapCommitDelta::StartAccount { login_req } => { w.u8(1).u32(*login_req); }
             } });
             w.option(delta.credentials.as_ref(), |w, patch| {
                 write_persisted(w, &patch.merge_into(&PersistedSession::default()));
@@ -1368,6 +1396,39 @@ impl SessionMachine {
         }, emit)
     }
 
+    fn discover_local(&mut self, emit: &mut impl FnMut(SessionFx)) -> bool {
+        let BootstrapAuthority::LocalPms { primary } = &self.state.authority else { return false };
+        if primary.machine_id.is_empty() || self.state.pending_erase.is_some()
+            || self.state.pending.values().any(|p| p.key.op == SessionOp::LocalDiscovery) { return false; }
+        let primary = primary.clone();
+        let Some(req) = self.allocate(SessionOp::LocalDiscovery, None) else { return false };
+        self.emit_work(req, SessionWork::LocalDiscovery { primary }, emit);
+        true
+    }
+
+    fn activate_local(&mut self, emit: &mut impl FnMut(SessionFx)) -> bool {
+        if self.state.phase != Phase::Idle || self.state.pending_commit.is_some()
+            || self.state.pending_erase.is_some() { return false; }
+        let BootstrapAuthority::LocalPms { primary } = &self.state.authority else { return false };
+        if !primary.token.is_empty() { return false; }
+        if !plx_plex::plex::session::anonymous_local_origin(&primary.origin()) {
+            if primary.machine_id.is_empty() { return false; }
+            self.state.phase = Phase::Discovering;
+            let started = self.discover_local(emit);
+            self.replace_publication();
+            return started;
+        }
+        let registry = vec![RegistryPlan::LocalInstall { primary: primary.clone(),
+            client_id: self.state.persisted.client_id.clone() }];
+        let Some(req) = self.allocate(SessionOp::DevBoundary, None) else { return false };
+        self.begin_commit(req, 0, true, CommitPlan { registry_client_id: self.state.persisted.client_id.clone(),
+            expected_disk: self.state.disk_identity.clone(), credentials: None, lifecycle: None, registry,
+            purpose: PersistencePurpose::Background, writes_durable: false,
+            authority: plx_plex::plex::session::SaveAuthority::Routine }, CommitDelta {
+                dev: Some(BootstrapCommitDelta::Activated), ..Default::default()
+            }, emit)
+    }
+
     fn activate_dev(&mut self, emit: &mut impl FnMut(SessionFx)) -> bool {
         if self.state.phase != Phase::Idle || self.state.pending_commit.is_some()
             || self.state.pending_erase.is_some() { return false; }
@@ -1380,7 +1441,7 @@ impl SessionMachine {
             credentials: None, lifecycle: None, registry,
             purpose: PersistencePurpose::Background, writes_durable: false,
             authority: plx_plex::plex::session::SaveAuthority::Routine }, CommitDelta {
-                dev: Some(DevCommitDelta::Activated), ..Default::default()
+                dev: Some(BootstrapCommitDelta::Activated), ..Default::default()
             }, emit)
     }
 
@@ -1388,7 +1449,7 @@ impl SessionMachine {
         if self.state.pending_erase.is_some() || self.state.epoch.checked_add(1).is_none()
             || self.state.next_req.checked_add(2).is_none()
             || self.state.pending_commit.as_ref().is_some_and(|c|
-                matches!(c.delta.dev, Some(DevCommitDelta::StartAccount { .. }))) { return false; }
+                matches!(c.delta.dev, Some(BootstrapCommitDelta::StartAccount { .. }))) { return false; }
         self.advance_epoch(emit).expect("dev login epoch preflight");
         self.publish_profile(None, emit);
         self.state.phase = Phase::Creating;
@@ -1401,7 +1462,7 @@ impl SessionMachine {
             credentials: None, lifecycle: None, registry: vec![RegistryPlan::Revoke],
             purpose: PersistencePurpose::Background, writes_durable: false,
             authority: plx_plex::plex::session::SaveAuthority::Routine }, CommitDelta {
-                dev: Some(DevCommitDelta::StartAccount { login_req }), ..Default::default()
+                dev: Some(BootstrapCommitDelta::StartAccount { login_req }), ..Default::default()
             }, emit);
         self.replace_publication();
         true
@@ -1530,7 +1591,7 @@ impl SessionMachine {
         };
         self.state.persistence_purpose = None;
         if !reply.admission.accepted() {
-            if let Some(DevCommitDelta::StartAccount { login_req }) = commit.delta.dev {
+            if let Some(BootstrapCommitDelta::StartAccount { login_req }) = commit.delta.dev {
                 self.retire(login_req, emit);
             }
             let op = self.state.pending.remove(&reply.req).unwrap().key.op;
@@ -1542,7 +1603,7 @@ impl SessionMachine {
                     self.state.apply_pending = false;
                     self.state.error = plx_platform::i18n::msg::browse_auth_switch_failed().into();
                 }
-                SessionOp::HomeRoster | SessionOp::ServerRoster | SessionOp::Endpoint(_) | SessionOp::Picker => {}
+                SessionOp::HomeRoster | SessionOp::ServerRoster | SessionOp::Endpoint(_) | SessionOp::Picker | SessionOp::LocalDiscovery => {}
                 SessionOp::DevBoundary => {
                     self.state.phase = Phase::Error;
                     self.state.apply_pending = false;
@@ -1558,17 +1619,23 @@ impl SessionMachine {
         let delta = commit.delta;
         if let Some(dev) = &delta.dev {
             match dev {
-                DevCommitDelta::Activated => {
-                    if let BootstrapAuthority::DevPms { primary, .. } = &self.state.authority {
+                BootstrapCommitDelta::Activated => {
+                    if let BootstrapAuthority::DevPms { primary, .. } | BootstrapAuthority::LocalPms { primary } = &self.state.authority {
                         let primary = primary.clone();
                         self.state.phase = Phase::Ready;
                         self.state.apply_pending = false;
                         self.publish_profile(None, emit);
                         emit(SessionFx::Ready { epoch: self.state.epoch, scope: self.state.profile_scope,
                             token: primary.token.clone(), server: primary, install: ReadyInstall::AlreadyInstalled });
+                        if matches!(self.state.authority, BootstrapAuthority::LocalPms { .. }) { self.discover_local(emit); }
                     }
                 }
-                DevCommitDelta::StartAccount { login_req } => {
+                BootstrapCommitDelta::LocalDisconnected => {
+                    self.state.phase = Phase::Deleted;
+                    self.state.apply_pending = false;
+                    self.state.error.clear();
+                }
+                BootstrapCommitDelta::StartAccount { login_req } => {
                     self.state.authority = BootstrapAuthority::Account { extras: Vec::new() };
                     self.state.signin_active = true;
                     emit(SessionFx::Coordinator(CoordinatorAction::SignInStarted));
@@ -1648,7 +1715,7 @@ impl SessionMachine {
                 server: self.state.persisted.server.clone(), token: self.state.persisted.pms_token().into(),
                 install: ReadyInstall::PrimaryAndExtras(match &self.state.authority {
                     BootstrapAuthority::Account { extras } => extras.clone(),
-                    BootstrapAuthority::DevPms { .. } => Vec::new(),
+                    BootstrapAuthority::DevPms { .. } | BootstrapAuthority::LocalPms { .. } | BootstrapAuthority::LocalUnavailable { .. } => Vec::new(),
                 }) });
         }
     }
@@ -1835,6 +1902,7 @@ impl SessionMachine {
     }
 
     fn refresh_roster(&mut self, emit: &mut impl FnMut(SessionFx)) -> bool {
+        if matches!(self.state.authority, BootstrapAuthority::LocalPms { .. }) { return self.discover_local(emit); }
         if self.state.persisted.account_token.is_empty() { return false; }
         let Some(req) = self.allocate(SessionOp::ServerRoster, None) else { return false };
         self.emit_work(req, SessionWork::ServerRoster { session: self.state.persisted.clone(),
@@ -1843,7 +1911,7 @@ impl SessionMachine {
     }
 
     fn start_switch(&mut self, picker: Picker, emit: &mut impl FnMut(SessionFx)) -> bool {
-        if matches!(self.state.authority, BootstrapAuthority::DevPms { .. }) {
+        if matches!(self.state.authority, BootstrapAuthority::DevPms { .. } | BootstrapAuthority::LocalPms { .. } | BootstrapAuthority::LocalUnavailable { .. }) {
             // A dev-token session has no account behind it to list a roster with. The account
             // menu still offers *Change profile* (it reads the on-disk sign-in), and the app has
             // already routed to the picker by the time this runs — so refusing SILENTLY left that
@@ -1925,6 +1993,7 @@ impl SessionMachine {
     }
 
     fn request_endpoint(&mut self, sid: plx_plex::plex::ServerId, emit: &mut impl FnMut(SessionFx)) -> bool {
+        if matches!(self.state.authority, BootstrapAuthority::LocalPms { .. }) { return self.discover_local(emit); }
         // The registry's own validity rule: every id but the reserved UNSET names a slot.
         if !sid.is_set()
             || self.state.persisted.account_token.is_empty()
@@ -1951,7 +2020,7 @@ impl SessionMachine {
         }
         let dead_end = self.state.roster_dead_end();
         if dead_end {
-            if let BootstrapAuthority::DevPms { primary, .. } = &self.state.authority {
+            if let BootstrapAuthority::DevPms { primary, .. } | BootstrapAuthority::LocalPms { primary } = &self.state.authority {
                 // Nothing was detached or re-pointed (see `start_switch`): re-announce the dev
                 // session exactly as its activation did.
                 let primary = primary.clone();
@@ -1998,6 +2067,19 @@ impl SessionMachine {
     }
 
     fn erase(&mut self, sign_in: bool, emit: &mut impl FnMut(SessionFx)) -> bool {
+        if matches!(self.state.authority, BootstrapAuthority::LocalUnavailable { .. }) { return false; }
+        if matches!(self.state.authority, BootstrapAuthority::LocalPms { .. }) {
+            if self.state.pending_commit.is_some() || self.state.pending_erase.is_some()
+                || self.advance_epoch(emit).is_none() { return false; }
+            self.publish_profile(None, emit);
+            let Some(req) = self.allocate(SessionOp::DevBoundary, None) else { return false };
+            return self.begin_commit(req, 0, true, CommitPlan {
+                registry_client_id: self.state.persisted.client_id.clone(),
+                expected_disk: self.state.disk_identity.clone(), credentials: None, lifecycle: None,
+                registry: vec![RegistryPlan::Revoke], purpose: PersistencePurpose::Background,
+                writes_durable: false, authority: plx_plex::plex::session::SaveAuthority::Routine,
+            }, CommitDelta { dev: Some(BootstrapCommitDelta::LocalDisconnected), ..Default::default() }, emit);
+        }
         if self.state.pending_erase.is_some() || self.state.epoch.checked_add(1).is_none() { return false; }
         emit(SessionFx::Coordinator(CoordinatorAction::CloseTelemetry));
         self.advance_epoch(emit).expect("epoch preflight");
@@ -2158,6 +2240,25 @@ impl SessionMachine {
             credentials: None, registry: Vec::new(), lifecycle: pending.lifecycle,
             purpose, writes_durable: false, authority };
         match &**data {
+            Observation::LocalServer { server, .. } => {
+                let BootstrapAuthority::LocalPms { primary } = &self.state.authority else { return false };
+                match server {
+                    Some(server) if !server.token.is_empty() || server.machine_id != primary.machine_id
+                        || !plx_plex::plex::session::anonymous_local_origin(&server.origin()) => return false,
+                    Some(server) if primary.origin_url != server.origin_url || self.state.phase != Phase::Ready => {
+                        let server = server.clone();
+                        self.state.authority = BootstrapAuthority::LocalPms { primary: server.clone() };
+                        plan.registry.push(RegistryPlan::LocalInstall { primary: server,
+                            client_id: self.state.persisted.client_id.clone() });
+                        delta.dev = Some(BootstrapCommitDelta::Activated);
+                    }
+                    None if self.state.phase == Phase::Discovering => {
+                        self.state.phase = Phase::Error;
+                        self.state.error = "No matching local Plex server was discovered".into();
+                    }
+                    _ => {}
+                }
+            }
             Observation::Login(super::LoginProgress::SignedIn { server, sources, users, .. }) => {
                 let mut next = self.state.persisted.clone();
                 next.server = server.clone();
@@ -2420,6 +2521,12 @@ impl SessionMachine {
     /// Start/restart is one owner decision. Check both counters before cancelling anything:
     /// exhaustion must not detach the still-live operation or reuse its resource address.
     fn restart_login(&mut self, fresh_login: bool, emit: &mut impl FnMut(SessionFx)) -> bool {
+        if matches!(self.state.authority, BootstrapAuthority::LocalUnavailable { .. }) { return false; }
+        if matches!(self.state.authority, BootstrapAuthority::LocalPms { .. }) {
+            if self.state.pending_commit.is_some() || self.state.pending_erase.is_some() { return false; }
+            self.state.phase = Phase::Idle;
+            return self.activate_local(emit);
+        }
         if matches!(self.state.authority, BootstrapAuthority::DevPms { .. }) {
             return (fresh_login || self.state.phase == Phase::Error) && self.begin_dev_account(emit);
         }
@@ -2758,6 +2865,7 @@ impl<H: SessionHost> plx_machine::machine::Machine<H> for SessionMachine {
         let mut emit = |effect| fx.push(Fx::App(H::session_effect(effect)));
         let handled = match ev {
             SessionEvent::Command(Command::ActivateDevBootstrap) => self.activate_dev(&mut emit),
+            SessionEvent::Command(Command::ActivateLocalBootstrap) => self.activate_local(&mut emit),
             SessionEvent::Command(Command::ResumeStored) => self.resume_stored(&mut emit),
             SessionEvent::Command(Command::StartLogin) => self.restart_login(true, &mut emit),
             SessionEvent::Command(Command::Retry) => self.retry(&mut emit),
@@ -5126,6 +5234,107 @@ mod tests {
         let effects = step(&mut owner, SessionEvent::Command(Command::BackAtRoot { reply }));
         assert!(effects.iter().any(|fx| matches!(fx, SessionFx::BackReply { resumed: false, .. })),
             "with tiles on screen the Change-profile picker is still the root it always was");
+    }
+
+    #[test]
+    fn invalid_anonymous_local_config_never_falls_back_to_cloud_login() {
+        let saved = PersistedSession { client_id: "local-invalid".into(),
+            account_token: "cached-account".into(), ..Default::default() };
+        let mut owner = SessionMachine::from_init(SessionInit::captured_local_unavailable(saved,
+            "invalid local server configuration".into()));
+        assert_eq!(owner.state.phase, Phase::Error);
+        assert!(owner.state.persisted.account_token.is_empty());
+        for command in [Command::StartLogin, Command::Retry, Command::SignOut] {
+            assert!(step(&mut owner, SessionEvent::Command(command)).is_empty());
+        }
+        assert_eq!(owner.state.phase, Phase::Error);
+    }
+
+    #[test]
+    fn anonymous_local_discovery_runs_as_work_and_hands_off_only_the_matching_server() {
+        let _g = plx_base::testlock::serial();
+        let primary = plx_plex::plex::session::parse_local_server_config(
+            br#"{"version":1,"machineId":"expected-server"}"#).unwrap();
+        let saved = PersistedSession { client_id: "local-discovery-client".into(), ..Default::default() };
+        let mut owner = SessionMachine::from_init(SessionInit::captured_local(saved, primary));
+        let effects = step(&mut owner, SessionEvent::Command(Command::ActivateLocalBootstrap));
+        let (req, key) = effects.iter().find_map(|effect| match effect {
+            SessionFx::Work { req, key, input: SessionWork::LocalDiscovery { primary }, .. } => {
+                assert_eq!(primary.machine_id, "expected-server");
+                assert!(primary.token.is_empty());
+                Some((*req, *key))
+            }
+            _ => None,
+        }).expect("discovery belongs to the asynchronous shared worker, not boot-thread IO");
+        assert_eq!(owner.state.phase, Phase::Discovering);
+        assert!(owner.read().0.code.is_empty());
+        assert!(step(&mut owner, SessionEvent::Command(Command::RefreshRoster)).is_empty(),
+            "parallel refreshes coalesce the already-running discovery");
+        owner.state.pending.get_mut(&req).unwrap().admission = AdmissionState::Accepted(AdmissionId(req));
+        let discovered = plx_plex::plex::session::parse_local_server_config(
+            br#"{"version":1,"machineId":"expected-server","origin":"http://192.168.50.99:32400"}"#).unwrap();
+        let effects = step(&mut owner, SessionEvent::Result(SessionEnvelope {
+            addr: Addr { to: MachineId::Session, req: plx_machine::machine::RequestId(req) },
+            key, admission: AdmissionId(req), arrival: 1, terminal: true, lifecycle: None,
+            outcome: SessionArrival::Data(Arc::new(super::super::observation::Observation::LocalServer {
+                epoch: key.epoch, server: Some(discovered),
+            })),
+        }));
+        assert!(effects.iter().any(|effect| matches!(effect, SessionFx::Commit { plan, .. }
+            if matches!(&plan.registry[..], [RegistryPlan::LocalInstall { primary, .. }]
+                if primary.address == "192.168.50.99" && primary.token.is_empty()))));
+        let effects = step(&mut owner, SessionEvent::Commit(CommitReply { req, epoch: key.epoch,
+            arrival: 1, admission: CommitAdmission::RegistryOnly }));
+        assert_eq!(owner.state.phase, Phase::Ready);
+        assert!(effects.iter().any(|effect| matches!(effect, SessionFx::Ready { token, server, .. }
+            if token.is_empty() && server.machine_id == "expected-server")));
+        assert!(effects.iter().all(|effect| !matches!(effect,
+            SessionFx::Work { input: SessionWork::Login { .. } | SessionWork::Rediscover { .. }
+                | SessionWork::HomeRoster { .. } | SessionWork::ServerRoster { .. }, .. })));
+    }
+
+    #[test]
+    fn anonymous_local_boot_bypasses_qr_without_account_credentials_or_cloud_work() {
+        let _g = plx_base::testlock::serial();
+        let saved = PersistedSession { client_id: "anonymous-local-client".into(),
+            account_token: "cached-account-not-for-local-mode".into(), ..Default::default() };
+        let primary = plx_plex::plex::session::parse_local_server_config(
+            br#"{"version":1,"origin":"http://127.0.0.1:32400","name":"Home media"}"#).unwrap();
+        assert!(!PersistedSession { server: primary.clone(), ..Default::default() }.can_go_local(),
+            "the account boot gate must still refuse a tokenless cached session");
+        let mut owner = SessionMachine::from_init(SessionInit::captured_local(saved, primary));
+        assert!(owner.state.persisted.account_token.is_empty());
+        let effects = step(&mut owner, SessionEvent::Command(Command::ActivateLocalBootstrap));
+        assert_eq!(effects.len(), 1, "no login, roster, account worker or credential write");
+        let (req, epoch) = match &effects[0] {
+            SessionFx::Commit { req, epoch, plan, .. } => {
+                assert!(plan.credentials.is_none());
+                assert!(!plan.writes_durable);
+                assert!(matches!(&plan.registry[..], [RegistryPlan::LocalInstall { primary, .. }] if primary.token.is_empty()));
+                (*req, *epoch)
+            }
+            _ => panic!("local boot must use a resource-only commit"),
+        };
+        let effects = step(&mut owner, SessionEvent::Commit(CommitReply { req, epoch, arrival: 0,
+            admission: CommitAdmission::RegistryOnly }));
+        assert_eq!(owner.state.phase, Phase::Ready);
+        assert!(effects.iter().any(|fx| matches!(fx, SessionFx::Ready { token, .. } if token.is_empty())));
+        assert!(owner.state.persisted.account_token.is_empty());
+
+        let effects = step(&mut owner, SessionEvent::Command(Command::SignOut));
+        let (req, epoch) = effects.iter().find_map(|fx| match fx {
+            SessionFx::Commit { req, epoch, plan, .. } => {
+                assert!(plan.credentials.is_none());
+                assert!(matches!(&plan.registry[..], [RegistryPlan::Revoke]));
+                Some((*req, *epoch))
+            }
+            _ => None,
+        }).expect("local disconnect revokes live clients without erasing a different account");
+        assert!(!effects.iter().any(|fx| matches!(fx, SessionFx::Erase { .. })));
+        step(&mut owner, SessionEvent::Commit(CommitReply { req, epoch, arrival: 0,
+            admission: CommitAdmission::RegistryOnly }));
+        assert_eq!(owner.state.phase, Phase::Deleted);
+        assert!(matches!(owner.state.authority, BootstrapAuthority::LocalPms { .. }));
     }
 
     /// Issue #132 as TV session 8 actually hit it: a dev-token (`DevPms`) boot, where the account

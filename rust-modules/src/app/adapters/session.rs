@@ -986,6 +986,7 @@ impl SessionAdapter {
         use plx_session::auth::owner::SessionOp;
         let (name, stream) = match key.op {
             SessionOp::Login => ("login", true),
+            SessionOp::LocalDiscovery => ("local-discovery", false),
             SessionOp::Rediscover => ("rediscover", true),
             SessionOp::HomeRoster => ("roster", false),
             SessionOp::ServerRoster => ("roster-srv", true),
