@@ -1318,9 +1318,12 @@ mod tests {
         let plan = CommitPlan { authority: plx_plex::plex::session::SaveAuthority::FreshReauthentication,
             ..queued_plan(&plx_plex::plex::session::load()) };
         enqueue_test_commit(&mut adapter, plan);
-        assert!(adapter.take_committed().is_none(), "admitted, not yet run");
+        // The real storage worker may finish between admission and the first poll.
+        let immediate = adapter.take_committed();
+        assert!(immediate.is_some() || adapter.commits.front().is_some_and(|pending| pending.ticket.is_some()),
+            "the new sign-in's commit is admitted");
         plx_base::storage_worker::drain_for_test();
-        let completed = adapter.take_committed().expect("the new sign-in's commit runs");
+        let completed = immediate.or_else(|| adapter.take_committed()).expect("the new sign-in's commit runs");
         assert!(matches!(completed.disk, Ok(Some(_))), "the new credential is written");
         assert_eq!(plx_plex::plex::session::load().account_token, "new-credential");
     }
