@@ -4,7 +4,7 @@
   "vendor": "beb",
   "type": "native",
   "main": "plxnative",
-  "title": "PlxNative",
+  "title": "Cinema",
   "appDescription": "Unofficial native Plex client - not affiliated with Plex",
   "icon": "icon.png",
   "largeIcon": "largeIcon.png",

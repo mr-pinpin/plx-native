@@ -1,6 +1,6 @@
-# PlxNative
+# Cinema
 
-> **PinPin fork:** optional account-free home-network mode is being developed in this repository. See [local server setup](docs/local-server.md). Upstream PlxNative remains credited below.
+> **Cinema is the PinPin household fork of PlxNative**, with explicit account-free home-network access. See [local server setup](docs/local-server.md) and [Cinema artwork provenance](assets/cinema/README.md). Original PlxNative code, authorship and GPL credits remain preserved. The upstream links and history below describe PlxNative.
 
 
 A fast, unofficial [Plex](https://www.plex.tv/) client for LG webOS televisions. Native, not a web

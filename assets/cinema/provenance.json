@@ -1,0 +1,134 @@
+{
+  "schema_version": 1,
+  "asset_family": "Cinema application branding — Mr PinPin eating popcorn",
+  "generator": "Built-in image_gen.imagegen",
+  "model": "Managed by the built-in tool; no CLI/API model override",
+  "transparent_background": false,
+  "status": "Generated, inspected and exported for the user-authorized Cinema application branding",
+  "generation_steps": [
+    {
+      "role": "initial icon generation",
+      "prompt": "Use case: stylized-concept. Asset type: finished square app icon for the household Cinema media app. Input image 1 is a CHARACTER IDENTITY REFERENCE ONLY: the sheet shows the same Mr PinPin hedgehog from multiple views; do not reproduce a sheet or multiple hedgehogs. Input image 2 is a WARM RENDERING STYLE REFERENCE ONLY; do not reproduce its bathing scene or other characters. Create exactly ONE friendly Mr PinPin, preserving his distinctive cream-colored fuzzy face and chest, chestnut-brown quills with warm pale tips, small rounded ears, dark button nose and very large kind glossy brown eyes. Upright head and upper body, almost front-facing with a gentle three-quarter turn, delighted at the cinema. One paw holds a simple classic popcorn bucket at his chest; the other paw brings one piece of popcorn toward his mouth. Face and popcorn bucket must be the dominant large clear shapes and remain recognizable when reduced to 80 pixels. Polished dimensional storybook rendering, detailed soft fur and quills, warm cinematic amber light against a clean simple deep dark navy-blue background. Full-bleed opaque square composition with the entire head, quills, paws and bucket within a safe 8 percent inset; the operating system will clip the outside corners. No lettering whatsoever, no word Cinema, no logos or watermarks, no extra characters, no clothing, no hat, no contact sheet, no picture frame, no decorative border. Output one high-resolution square PNG.",
+      "output": "exec-5ac410d1-0975-40ed-b181-85aed7ea22e2.png",
+      "selected": false
+    },
+    {
+      "role": "framing draft",
+      "prompt": "Edit this generated Cinema app icon only to correct its framing. Preserve exactly this single Mr PinPin hedgehog's face, eyes, chestnut quills, cream fur, happy expression, warm cinematic lighting, dark navy background, popcorn bucket and eating gesture. Zoom the composition out enough that the ENTIRE visible subject silhouette, including the top and side quills, both paws and the COMPLETE bottom of the popcorn bucket, fits inside an 8 percent safe inset on all four sides. Extend the same simple opaque navy background to the full square edges. Head and bucket should still feel large and readable as an 80-pixel app icon. No lettering, logos, additional objects, additional characters, clothing, hat, frame or contact sheet. Make a finished opaque square PNG.",
+      "output": "exec-e615be5f-9587-48a7-940e-be2f80cb61bb.png",
+      "selected": false
+    },
+    {
+      "role": "upper-body framing",
+      "prompt": "Correct the framing of this generated Cinema icon while preserving its exact Mr PinPin identity, happy face, cream fur, chestnut quills, large brown eyes, eating gesture, popcorn bucket, navy background and warm cinematic rendering. This must remain a LARGE CLOSE UPPER-BODY PORTRAIT, not a full-body figure: no legs and no feet. Show the complete head with its outer quills, both paws and the COMPLETE bottom of the popcorn bucket. The bucket hides the lower body. Keep the face and bucket large and dominant for legibility at80px. Put these shapes comfortably within a10percent safe margin on every side of the opaque square, extending the simple navy background to all edges. No lettering, logos, other characters, additional props, clothes, hat, border or contact sheet. One finished square icon.",
+      "output": "exec-686bb9ae-5d82-45dd-b9dc-c88ae2b4c708.png",
+      "selected": false
+    },
+    {
+      "role": "selected icon with safe margins",
+      "prompt": "Make only a framing change to this exact icon: scale the ENTIRE existing hedgehog-and-popcorn composition down to 80 percent of its current size, keeping it centered, and fill the newly exposed surrounding canvas with the SAME plain deep navy background. Preserve all character anatomy, face, pose, paws, popcorn, complete bucket, colors and lighting exactly. Leave generous empty navy breathing room all around; nothing may touch the image edges. Do not add legs, feet, objects, lettering, border lines or a frame. Opaque square PNG.",
+      "output": "exec-be793607-73a0-4290-8e52-a74a3aae1ac4.png",
+      "selected": true
+    },
+    {
+      "role": "selected matching splash",
+      "prompt": "Use case: stylized-concept. Create a finished LANDSCAPE1920x1080(16:9) television application splash screen for Cinema. The attached NEW Cinema icon is the exact character, pose, colors and rendering reference: preserve this friendly single Mr PinPin hedgehog with cream face and chest, chestnut quills, large brown eyes, popcorn bucket and one paw bringing popcorn to his smiling mouth. Upper-body portrait only, no legs or feet. Place him centered with warm amber cinematic light, occupying roughly60percent of canvas height, with generous spacious clean deep-navy background on both sides. Below him, centered near the lower middle, render the single exact word \"Cinema\" in tasteful large simple warm-ivory lettering, highly readable on a television. The only text is Cinema, exactly once; no subtitle. Keep all character quills/paws/bucket and title well inside television-safe margins. Opaque full-bleed landscape navy canvas. No other characters, no other logos, no PLX identity, no hat, no clothes, no border, no frame, no contact sheet. This must look like a coherent companion to the attached icon, not a different hedgehog or a crowded movie scene.",
+      "output": "exec-36564128-ea75-48cb-b24d-ee6a8b919b3a.png",
+      "selected": true
+    }
+  ],
+  "reference_sources": [
+    {
+      "repository": "mr-pinpin/mr-pinpin-source",
+      "path": "docs/storyboard/images/atlas/family-production-v1/pinpin-a-v1.png",
+      "role": "Character identity reference; not copied into the application",
+      "sha256": "ae95c02059f0af05a10fbabfaf354425b21ac1f7adbb434e8c82be5caa600b9c",
+      "bytes": 1931764
+    },
+    {
+      "repository": "mr-pinpin/mr-pinpin-source",
+      "path": "docs/storyboard/images/covers/home-sweet-home/miniature/miniature-v1.png",
+      "role": "Warm rendering reference; scene and other characters excluded",
+      "sha256": "c894462b0061fe27487c048cd626a73515f00fd46f3342df2955c54f5a66e26a",
+      "bytes": 2399135
+    }
+  ],
+  "export_method": "Original selected PNG bytes copied unchanged as masters. App-size exports use Pillow RGB Lanczos resizing only; no drawing, compositing or creative edits.",
+  "licensing_boundary": "The specific new Cinema icon/splash outputs and their application-size exports are distributed with Cinema under GPL-3.0-or-later where copyrightable rights are owned or licensable by the project, as stated in README.md. No exclusive copyright is asserted in unprotectable AI-generated output. Original book/reference artwork is not copied or relicensed; no general character/franchise license is granted.",
+  "reference_source_checkout": "f79e64f1584ffbadf09dac12ab90475722fef745",
+  "recorded_at_utc": "2026-10-26T23:57:14.473354+00:00",
+  "outputs": [
+    {
+      "file": "cinema-icon-130-v1.png",
+      "sha256": "ce9d4f7b7de7d329ad53e770029defbb2de3aeafd7853a558c73af27dd2e56da",
+      "bytes": 22531,
+      "width": 130,
+      "height": 130,
+      "mode": "RGB"
+    },
+    {
+      "file": "cinema-icon-160-v1.png",
+      "sha256": "7fa12e95c117089ce181686ec3bf0cabc6bc19d70eadd3f05ce81796587dae7e",
+      "bytes": 33660,
+      "width": 160,
+      "height": 160,
+      "mode": "RGB"
+    },
+    {
+      "file": "cinema-icon-256-v1.png",
+      "sha256": "ea748dfb0979e3b098e053d790d44f9e908bd9fd3c0d02379b591c1a9afe68a6",
+      "bytes": 84127,
+      "width": 256,
+      "height": 256,
+      "mode": "RGB"
+    },
+    {
+      "file": "cinema-icon-320-v1.png",
+      "sha256": "19b3bbaaab25e1bd65e6feb5d95e29585817064b7f91dc49317e1f68a3b8ced4",
+      "bytes": 130206,
+      "width": 320,
+      "height": 320,
+      "mode": "RGB"
+    },
+    {
+      "file": "cinema-icon-400-v1.png",
+      "sha256": "a50cc337851e8ac1f236cc9ea285ed864f14c05fa82524b9ef5d1675dbfb4359",
+      "bytes": 201145,
+      "width": 400,
+      "height": 400,
+      "mode": "RGB"
+    },
+    {
+      "file": "cinema-icon-80-v1.png",
+      "sha256": "d8296a77f1b27c09360ac96c08f64a9cf8e81422d90d5ab65361015baf6356a4",
+      "bytes": 8875,
+      "width": 80,
+      "height": 80,
+      "mode": "RGB"
+    },
+    {
+      "file": "cinema-icon-master-v1.png",
+      "sha256": "1ebe93ba1d0478eb3ab688541c5835abab8ce1adba8b5fb471e5d3167c137aee",
+      "bytes": 1757665,
+      "width": 1254,
+      "height": 1254,
+      "mode": "RGB"
+    },
+    {
+      "file": "cinema-splash-1920x1080-v1.png",
+      "sha256": "e82c11e60dd838e24a1dd5b97254cac33782e040f8b164137e74f1242c907aa4",
+      "bytes": 1836399,
+      "width": 1920,
+      "height": 1080,
+      "mode": "RGB"
+    },
+    {
+      "file": "cinema-splash-master-v1.png",
+      "sha256": "fca4ef15513891fe02f31d0e994726fb4bc2cfd8d58b185e1965fb931850ce54",
+      "bytes": 1750553,
+      "width": 1672,
+      "height": 941,
+      "mode": "RGB"
+    }
+  ]
+}

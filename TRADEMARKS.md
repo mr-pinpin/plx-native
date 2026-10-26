@@ -1,4 +1,4 @@
-# Trademarks, brand assets, and non-affiliation
+# Cinema branding, upstream marks, and non-affiliation
 
 The [GPL-3.0-or-later grant](LICENSE) covers this project's own source code. This file covers the things a
 licence grant does not: the marks that identify the project, and whose software this interoperates
@@ -9,20 +9,22 @@ is stated in `LICENSING.md`; this trademark guidance remains separate.
 
 ## Trademarks and brand assets
 
-The name **PlxNative** and the PLX logo and splash artwork — `assets/logo-master.png`,
-`assets/splash-master.png`, and the `pkg/icon*.png` / `pkg/largeIcon.png` / `pkg/splash.png` cut
-from them — identify this project. They are **not** licensed for use as the identity of a derived
-or redistributed work.
+**Cinema** identifies this household fork. It is based on PlxNative by Gleb Linnik
+and contributors; the original GPL credits and license remain in [LICENSING.md](LICENSING.md).
+Cinema does not claim to be an official PlxNative or Plex release.
 
-You may fork and redistribute this software under the GPL-3.0-or-later terms; please do so under your own name
-and mark, so that users can tell the two apart. This is the usual reservation made by projects that
-ship an identity along with their code, and it restricts nothing else.
+The Cinema launcher and splash artwork was generated for Miguel's commissioned
+Mister PinPin popcorn identity. Its provenance and redistribution scope are recorded
+in [the Cinema asset notes](assets/cinema/README.md). No exclusive copyright in
+unmodified generative-model output is asserted. This fork's code license does not
+relicense Mister PinPin books, characters or reference illustrations generally.
 
-This reservation rests on **trademark** — on the marks identifying the origin of this application —
-and is deliberately not framed as a copyright claim. The master images were produced with a
-generative image model, and the extent of copyright in such output is unsettled and, in some
-jurisdictions, nil. That affects a copyright claim; it does not affect the marks, whose protection
-comes from use in commerce rather than from authorship.
+The upstream **PlxNative** name and PLX logo/splash identify the upstream project.
+Its trademark reservation remains applicable to those original marks: the upstream
+project permits GPL forks but asks that derived distributions use their own name
+and mark. Cinema replaces the distributed launcher and splash identity; references
+to PlxNative in source credits and historical documentation identify its origin.
+This distinction concerns identity, not a restriction on the GPL source grant.
 
 ## Third-party components
 
