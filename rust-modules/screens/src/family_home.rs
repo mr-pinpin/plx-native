@@ -102,7 +102,7 @@ impl<H:AppLike> Screen<H> for FamilyHomeScreen {
             f.stop(p,Stop{key:self.key(i),rect,rest_rect:rect,clip:Rect::FULL,hover:Hover::Focus,activate:Activate::Press});
         }
     }
-    fn render(&self)->RenderStrategy{RenderStrategy::Page}
+    fn render(&self)->RenderStrategy{RenderStrategy::VideoPlane}
     fn focus_source(&self)->FocusSource{FocusSource::Engine}
     fn hit_source(&self)->HitSource{HitSource::Engine}
     fn as_any(&self)->Option<&dyn std::any::Any>{Some(self)}
