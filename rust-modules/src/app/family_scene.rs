@@ -37,27 +37,39 @@ impl Grant {
 pub(crate) enum Change {Ready(Grant),Passive}
 #[derive(Clone,Copy,Debug,PartialEq,Eq)]
 enum Heartbeat {Healthy,Transient,Fatal}
-enum Reply {Start(Option<Grant>),Heartbeat(Heartbeat),Stopped}
+#[derive(Clone)]
+struct StartAttempt {scene:String,generation:u32}
+enum Reply {Start(StartAttempt,Option<Grant>),Heartbeat(Heartbeat),Stopped}
+enum Operation {Start(StartAttempt),Heartbeat,Stop}
+struct Pending {receiver:Receiver<Reply>,operation:Operation}
+impl Operation {
+    fn disconnected(&self)->Reply{match self{
+        Self::Start(attempt)=>Reply::Start(attempt.clone(),None),
+        Self::Heartbeat=>Reply::Heartbeat(Heartbeat::Transient),Self::Stop=>Reply::Stopped,
+    }}
+}
 pub(crate) struct Controller {
-    config:Config,desired:Option<String>,active:Option<Grant>,pending:Option<Receiver<Reply>>,
+    config:Config,desired:Option<String>,active:Option<Grant>,pending:Option<Pending>,generation:u32,
     stops:Vec<Grant>,foreground:bool,next:u32,heartbeat_misses:u8,heartbeat_since:Option<u32>,
 }
 impl Controller {
-    pub fn new(config:Config)->Self{Self{desired:Some(config.scene.clone()),config,active:None,pending:None,stops:Vec::new(),foreground:false,next:super::clock::now(),heartbeat_misses:0,heartbeat_since:None}}
+    pub fn new(config:Config)->Self{Self{desired:Some(config.scene.clone()),config,active:None,pending:None,generation:0,stops:Vec::new(),foreground:false,next:super::clock::now(),heartbeat_misses:0,heartbeat_since:None}}
     pub fn immersive(&self)->bool{self.active.as_ref().is_some_and(|grant|grant.scene!=self.config.scene)}
-    pub fn select(&mut self,scene:&str){if scene_id(scene){self.desired=Some(scene.into());self.next=super::clock::now();}}
+    pub fn select(&mut self,scene:&str){if scene_id(scene){self.generation=self.generation.wrapping_add(1);self.desired=Some(scene.into());self.next=super::clock::now();}}
     pub fn home(&mut self)->bool{
         if self.desired.as_deref().is_some_and(|scene|scene!=self.config.scene){let scene=self.config.scene.clone();self.select(&scene);true}else{false}
     }
     fn retire(&mut self){self.heartbeat_misses=0;self.heartbeat_since=None;if let Some(grant)=self.active.take(){self.stops.push(grant);}}
     fn accept(&mut self,reply:Reply,foreground:bool)->Option<Change>{
         match reply {
-            Reply::Start(Some(grant)) if foreground&&self.desired.as_deref()==Some(grant.scene.as_str())=>{
+            Reply::Start(attempt,Some(grant)) if foreground&&self.generation==attempt.generation&&self.desired.as_deref()==Some(attempt.scene.as_str())&&grant.scene==attempt.scene=>{
                 self.retire();self.active=Some(grant.clone());self.next=super::clock::now().wrapping_add(10000);Some(Change::Ready(grant))
             },
-            Reply::Start(Some(grant))=>{self.stops.push(grant);None},
-            Reply::Start(None)=>{
-                self.retire();self.next=super::clock::now().wrapping_add(5000);
+            Reply::Start(_,Some(grant))=>{self.stops.push(grant);None},
+            Reply::Start(attempt,None)=>{
+                if !foreground||self.generation!=attempt.generation||self.desired.as_deref()!=Some(attempt.scene.as_str()){return None;}
+                self.retire();let home=self.config.scene.clone();self.select(&home);
+                self.next=super::clock::now().wrapping_add(5000);
                 Some(Change::Passive)
             },
             Reply::Heartbeat(outcome)=>{
@@ -90,21 +102,21 @@ impl Controller {
     }
     pub fn poll(&mut self,foreground:bool)->Option<Change>{
         let mut change=None;
-        if !foreground&&self.foreground{self.desired=None;self.retire();change=Some(Change::Passive);}
-        if foreground&&!self.foreground{self.desired=Some(self.config.scene.clone());self.next=super::clock::now();}
+        if !foreground&&self.foreground{self.generation=self.generation.wrapping_add(1);self.desired=None;self.retire();change=Some(Change::Passive);}
+        if foreground&&!self.foreground{let home=self.config.scene.clone();self.select(&home);}
         self.foreground=foreground;
-        let reply=self.pending.as_ref().and_then(|recv|match recv.try_recv(){Ok(reply)=>Some(reply),Err(TryRecvError::Disconnected)=>Some(if self.active.is_some(){Reply::Heartbeat(Heartbeat::Transient)}else{Reply::Start(None)}),Err(TryRecvError::Empty)=>None});
+        let reply=self.pending.as_ref().and_then(|pending|match pending.receiver.try_recv(){Ok(reply)=>Some(reply),Err(TryRecvError::Disconnected)=>Some(pending.operation.disconnected()),Err(TryRecvError::Empty)=>None});
         if let Some(reply)=reply {
             self.pending=None;
             change=self.accept(reply,foreground).or(change);
         }
         if self.pending.is_none(){
-            if let Some(grant)=self.stops.pop(){self.pending=worker(move||{let _=session_request(&grant,"render.scene.stop");Reply::Stopped});}
+            if let Some(grant)=self.stops.pop(){self.pending=worker(move||{let _=session_request(&grant,"render.scene.stop");Reply::Stopped}).map(|receiver|Pending{receiver,operation:Operation::Stop});}
             else if foreground&&super::clock::now().wrapping_sub(self.next)<u32::MAX/2 {
                 if let Some(scene)=self.desired.clone(){
                     if self.active.as_ref().is_some_and(|grant|grant.scene==scene){
-                        let grant=self.active.as_ref().unwrap().clone();self.pending=worker(move||Reply::Heartbeat(session_request(&grant,"render.scene.heartbeat")));
-                    }else{let query=self.config.query_url.clone();self.pending=worker(move||Reply::Start(start(&query,&scene)));}
+                        let grant=self.active.as_ref().unwrap().clone();self.pending=worker(move||Reply::Heartbeat(session_request(&grant,"render.scene.heartbeat"))).map(|receiver|Pending{receiver,operation:Operation::Heartbeat});
+                    }else{let query=self.config.query_url.clone();let attempt=StartAttempt{scene:scene.clone(),generation:self.generation};let owner=attempt.clone();self.pending=worker(move||Reply::Start(attempt,start(&query,&scene))).map(|receiver|Pending{receiver,operation:Operation::Start(owner)});}
                 }
             }
         }
@@ -114,7 +126,7 @@ impl Controller {
         // A failed displayed scene yields to Home once. Retrying it without another
         // selection repeatedly replaces the healthy local background with black.
         // A newer user selection must survive a failure from the previous scene.
-        if self.active.as_ref().is_some_and(|grant|self.desired.as_deref()==Some(grant.scene.as_str())&&grant.scene!=self.config.scene){self.desired=Some(self.config.scene.clone());}
+        if self.active.as_ref().is_some_and(|grant|self.desired.as_deref()==Some(grant.scene.as_str())&&grant.scene!=self.config.scene){let home=self.config.scene.clone();self.select(&home);}
         self.retire();self.next=super::clock::now().wrapping_add(5000);
     }
 }
@@ -156,6 +168,35 @@ mod tests {
     use super::*;
     fn grant(scene:&str)->Grant{Grant{session_id:"test-session".into(),scene:scene.into(),state:"ready".into(),video_url:"http://192.0.2.1:4188/video.ts".into(),vcodec:"h264".into(),fps:30.0,width:1920,height:1080,video_only:true,controls:Controls{input_url:"http://192.0.2.1:4188/input".into(),heartbeat_url:"http://192.0.2.1:4188/heartbeat".into(),stop_url:"http://192.0.2.1:4188/stop".into()}}}
     fn controller()->Controller{Controller::new(Config{query_url:"http://192.0.2.1:4188/query".into(),scene:"forest".into()})}
+    fn attempt(c:&Controller,scene:&str)->StartAttempt{StartAttempt{scene:scene.into(),generation:c.generation}}
+    fn accept_start(c:&mut Controller,grant:Option<Grant>,foreground:bool)->Option<Change>{
+        let ticket=attempt(c,grant.as_ref().map(|g|g.scene.as_str()).unwrap_or("atlas"));c.accept(Reply::Start(ticket,grant),foreground)
+    }
+
+    #[test]
+    fn failed_current_start_returns_home_once_instead_of_retrying_atlas(){
+        let mut c=controller();c.select("atlas");let ticket=attempt(&c,"atlas");
+        assert!(matches!(c.accept(Reply::Start(ticket.clone(),None),true),Some(Change::Passive)));
+        assert_eq!(c.desired.as_deref(),Some("forest"));assert!(c.active.is_none());
+        assert!(c.accept(Reply::Start(ticket,None),true).is_none());
+    }
+    #[test]
+    fn failed_old_start_does_not_erase_newer_selection_or_same_scene_reselection(){
+        let mut c=controller();c.select("atlas");let ticket=attempt(&c,"atlas");c.select("alambique");
+        assert!(c.accept(Reply::Start(ticket,None),true).is_none());
+        assert_eq!(c.desired.as_deref(),Some("alambique"));
+        c.select("atlas");let ticket=attempt(&c,"atlas");c.select("forest");c.select("atlas");
+        assert!(c.accept(Reply::Start(ticket,None),true).is_none());
+        assert_eq!(c.desired.as_deref(),Some("atlas"));
+    }
+    #[test]
+    fn failed_start_after_background_is_ignored_and_disconnected_worker_keeps_its_ticket(){
+        let mut c=controller();c.select("atlas");let ticket=attempt(&c,"atlas");
+        let operation=Operation::Start(ticket);c.desired=None;c.generation=c.generation.wrapping_add(1);
+        assert!(c.accept(operation.disconnected(),false).is_none());assert!(c.desired.is_none());
+        let mut c=controller();c.select("atlas");let operation=Operation::Start(attempt(&c,"atlas"));c.select("alambique");
+        assert!(c.accept(operation.disconnected(),true).is_none());assert_eq!(c.desired.as_deref(),Some("alambique"));
+    }
     #[test]
     fn one_control_timeout_preserves_scene_and_recovery_resets_grace(){
         let _serial=plx_base::testlock::serial();
@@ -218,10 +259,10 @@ mod tests {
     #[test]
     fn a_late_start_after_background_is_retired_without_becoming_visible(){
         let mut controller=controller();controller.desired=None;
-        assert!(controller.accept(Reply::Start(Some(grant("atlas"))),false).is_none());
+        assert!(accept_start(&mut controller,Some(grant("atlas")),false).is_none());
         assert!(controller.active.is_none());assert!(controller.desired.is_none());assert_eq!(controller.stops.len(),1);
         controller.desired=Some("alambique".into());
-        assert!(controller.accept(Reply::Start(Some(grant("atlas"))),true).is_none());
+        assert!(accept_start(&mut controller,Some(grant("atlas")),true).is_none());
         assert!(controller.active.is_none());assert_eq!(controller.stops.len(),2);
     }
     #[test]
@@ -235,9 +276,9 @@ mod tests {
     #[test]
     fn immersive_follows_accepted_active_scene_not_pending_choice(){
         let mut c=controller();c.select("atlas");assert!(!c.immersive());
-        assert!(matches!(c.accept(Reply::Start(Some(grant("atlas"))),true),Some(Change::Ready(_))));assert!(c.immersive());
+        assert!(matches!(accept_start(&mut c,Some(grant("atlas")),true),Some(Change::Ready(_))));assert!(c.immersive());
         c.home();assert!(c.immersive(),"pending default is not yet displayed");
-        let _=c.accept(Reply::Start(Some(grant("forest"))),true);assert!(!c.immersive());
+        let _=accept_start(&mut c,Some(grant("forest")),true);assert!(!c.immersive());
         c.active=Some(grant("atlas"));c.failed();assert!(!c.immersive());
     }
     #[test]
