@@ -1605,6 +1605,9 @@ pub(crate) unsafe fn construct(
     plx_platform::i18n::initialize(session.language, controlled);
     let (local_primary, local_error) = if controlled { (None, None) } else {
         match plx_plex::plex::session::load_local_server_config() {
+            Ok(Some(primary)) if !plx_plex::plex::audience::local_profile_ready(&primary.machine_id) =>
+                (None, Some("Kids requires a valid matching audience catalog".into())),
+            Ok(None) if plx_plex::plex::audience::is_kids_install() => (None, Some("Kids requires explicit local server configuration".into())),
             Ok(primary) => (primary, None),
             Err(error) => { log(&format!("boot: local server configuration refused: {error}")); (None, Some(error)) }
         }

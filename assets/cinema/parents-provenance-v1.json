@@ -1,0 +1,82 @@
+{
+  "schema_version": 1,
+  "asset": "Parents Cinema icon",
+  "generator": "Built-in image_gen.imagegen",
+  "prompt": "Use case: stylized-concept. One finished opaque square application icon for the Parents edition of Cinema. Reference1 is the existing Kids Cinema icon for polished warm storybook rendering ONLY; do not repeat its single child character. Reference2 is Mama hedgehog's identity sheet, reference3 PinPin's chestnut-and-cream hedgehog identity vocabulary; sheets are references only, never reproduce a sheet. Show exactly TWO grown-up parent hedgehogs, Mum and Dad, side by side with affectionate warm expressions, watching a movie and sharing a large classic popcorn bucket between them. Both are clearly adult hedgehogs with warm chestnut quills, soft cream faces, rounded ears, glossy kind brown eyes; Dad a little broader, Mum with her warmer soft face from reference. One paw bringing popcorn toward a mouth, another holding the bucket. Large upper-body portraits and the bucket dominate, readable at80pixels. Distinct from the Kids icon: simple deep warm BURGUNDY cinema background, subtle teal rim light and warm amber faces. All faces, quills, paws and the complete bucket within an8percent safe inset. No text, no logos, no watermark, no hats, no clothes, no other characters, no cinema scenery or extra objects, no contact sheet, no decorative frame. Full-bleed opaque square PNG.",
+  "transparent_background": false,
+  "exports": "Original generated PNG copied unchanged. Smaller opaque RGB PNGs are Lanczos resizing only.",
+  "rights_boundary": "Only newly commissioned app-branding outputs are included. Original book references remain under existing terms and are not copied or relicensed. No exclusive copyright is claimed in unprotectable AI-generated output.",
+  "references": [
+    {
+      "path": "pinpin-plx-native/assets/cinema/cinema-icon-master-v1.png",
+      "sha256": "1ebe93ba1d0478eb3ab688541c5835abab8ce1adba8b5fb471e5d3167c137aee"
+    },
+    {
+      "path": "mr-pinpin-source/docs/storyboard/images/atlas/family-production-v1/mama-a-v1.png",
+      "sha256": "181cbfa6b39355a42b003b9a35b2ff1947434c662190ea420874e5bfc34d3e0d"
+    },
+    {
+      "path": "mr-pinpin-source/docs/storyboard/images/atlas/family-production-v1/pinpin-a-v1.png",
+      "sha256": "ae95c02059f0af05a10fbabfaf354425b21ac1f7adbb434e8c82be5caa600b9c"
+    }
+  ],
+  "outputs": [
+    {
+      "file": "cinema-parents-icon-130-v1.png",
+      "width": 130,
+      "height": 130,
+      "mode": "RGB",
+      "bytes": 35305,
+      "sha256": "5568ffc660c251e43ffdce3afac81f7487f80a58b7a25fab3ec94510b1a77250"
+    },
+    {
+      "file": "cinema-parents-icon-160-v1.png",
+      "width": 160,
+      "height": 160,
+      "mode": "RGB",
+      "bytes": 52263,
+      "sha256": "8932618aab7ab8ed7e92c26eec58c8cdd1fcbcb09f0b777c2fde6b5dbea341de"
+    },
+    {
+      "file": "cinema-parents-icon-256-v1.png",
+      "width": 256,
+      "height": 256,
+      "mode": "RGB",
+      "bytes": 126683,
+      "sha256": "9a4f3fbf460f6ca94339972aa549e9a329e0c559ef93312e4dc714b27d43abc6"
+    },
+    {
+      "file": "cinema-parents-icon-320-v1.png",
+      "width": 320,
+      "height": 320,
+      "mode": "RGB",
+      "bytes": 193334,
+      "sha256": "f7ce3143f9ff7409166a37287da733ffccf6dcb5fc1b1968db831c0120ab123c"
+    },
+    {
+      "file": "cinema-parents-icon-400-v1.png",
+      "width": 400,
+      "height": 400,
+      "mode": "RGB",
+      "bytes": 294229,
+      "sha256": "9894c1ff3cc84e60858591d32176a870e2de31a7635987e3639b532c57a44b2f"
+    },
+    {
+      "file": "cinema-parents-icon-80-v1.png",
+      "width": 80,
+      "height": 80,
+      "mode": "RGB",
+      "bytes": 14055,
+      "sha256": "3bd89ba715b54671b55f842eccb9b06013e050530d7a23ee327d409fedf42a3c"
+    },
+    {
+      "file": "cinema-parents-icon-master-v1.png",
+      "width": 1254,
+      "height": 1254,
+      "mode": "RGB",
+      "bytes": 2484566,
+      "sha256": "01cd1aafc95e46c3c29509c70390e9c6c6e52427086fd50351477ba313a7da09"
+    }
+  ],
+  "recorded_at_utc": "2026-10-27T00:11:24.701701+00:00"
+}

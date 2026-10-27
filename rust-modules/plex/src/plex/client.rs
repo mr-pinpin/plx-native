@@ -17,7 +17,7 @@
 //! A `Client` is ONE server. WHICH servers exist, which one is current, and how a `&'static
 //! Client` is handed out live next door in [`super::servers`] — this file is the type, that
 //! file is the table.
-use super::models::{Envelope, MediaContainer};
+use super::models::MediaContainer;
 use super::origin::Origin;
 use super::probe::Location;
 use super::servers::ServerId;
@@ -588,7 +588,7 @@ impl Client {
         request_headers.push(ACCEPT_JSON);
         request_headers.extend_from_slice(headers);
         let body = self.body_2xx_bulk(path_no_token, &request_headers)?;
-        match serde_json::from_slice::<Envelope>(&body) {
+        match super::audience::envelope(self.machine_id(), path_no_token, &body) {
             Ok(e) => Some(e.media_container),
             Err(e) => {
                 // A 2xx whose body will not parse is the failure that used to be indistinguishable
@@ -620,7 +620,7 @@ impl Client {
             return JsonStatusOutcome::Transport;
         };
         let parsed = if reply.ok() {
-            match serde_json::from_slice::<Envelope>(&reply.body) {
+            match super::audience::envelope(self.machine_id(), path_no_token, &reply.body) {
                 Ok(envelope) => Some(envelope.media_container),
                 Err(error) => {
                     plx_base::eventlog::log(&format!(
@@ -656,7 +656,7 @@ impl Client {
         match self.send_until(path_no_token, Method::Get, &request_headers, deadline) {
             http::RequestOutcome::Response(reply) => {
                 let parsed = if reply.ok() {
-                    match serde_json::from_slice::<Envelope>(&reply.body) {
+                    match super::audience::envelope(self.machine_id(), path_no_token, &reply.body) {
                         Ok(envelope) => Some(envelope.media_container),
                         Err(error) => {
                             plx_base::eventlog::log(&format!(
@@ -730,6 +730,7 @@ impl Client {
     /// not the first.
     #[track_caller]
     pub fn fetch_built_outcome(&self, path_with_token: &str) -> ArtFetch {
+        if !super::audience::allows_art(self.machine_id(), path_with_token) { return ArtFetch::Status(403); }
         if !self.may_send() {
             return ArtFetch::NoResponse;
         }
@@ -842,7 +843,7 @@ impl Client {
     /// POST → parse the `{ "MediaContainer": … }` envelope — /playQueues (the returned ids).
     pub(super) fn post_json(&self, path_no_token: &str) -> Option<MediaContainer> {
         let body = self.body_2xx(path_no_token, Method::Post, &[ACCEPT_JSON])?;
-        serde_json::from_slice::<Envelope>(&body)
+        super::audience::envelope(self.machine_id(), path_no_token, &body)
             .ok()
             .map(|e| e.media_container)
     }
@@ -853,6 +854,7 @@ impl Client {
 
     /// THE token choke point. Appends `X-Plex-Token=…` with the right separator.
     pub(super) fn with_token(&self, path: &str) -> String {
+        if !super::audience::allows_path(self.machine_id(), path) { return "/pinpin-audience-denied".into(); }
         let sep = if path.contains('?') { '&' } else { '?' };
         let tok = self.token.read().map(|g| g.clone()).unwrap_or_default();
         if tok.is_empty() && self.anonymous_local.load(Relaxed) { path.to_owned() } else { format!("{path}{sep}X-Plex-Token={tok}") }

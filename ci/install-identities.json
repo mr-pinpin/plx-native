@@ -7,11 +7,15 @@
   {
     "name": "debug",
     "app_id": "com.beb.plxnative.debug",
-    "object_id": "plxstate.debug"
+    "object_id": "plxstate.debug",
+    "display_title": "Cinema Parents",
+    "icon_color": "#4d0108"
   },
   {
     "name": "nightly",
     "app_id": "com.beb.plxnative.nightly",
-    "object_id": "plxstate.night"
+    "object_id": "plxstate.night",
+    "display_title": "Cinema Kids",
+    "icon_color": "#011a4a"
   }
 ]

@@ -12,17 +12,13 @@ version (`rust-modules/build.rs::emit_version`'s `PLX_CHANNEL=nightly` arm). The
 block is the account of why; this file is the part that has to be identical in three places at
 once.
 
-**PATCH, DO NOT DUPLICATE.** `pkg/appinfo.json` has 15 fields and exactly TWO of them may differ
-between flavours — `id` and `title` — except for `nightly`, which also moves `version` (to
-`<next X.Y>.<cut date>`, see `appinfo_for`). The other thirteen (twelve for nightly) — `type`,
-`main`, `transparent`, `requiredMemory`, `nativeLifeCycleInterfaceVersion`, `handlesRelaunch`,
-`splashBackground`, `iconColor`, `vendor`, `appDescription` and the two icon FILENAMES, plus
-`version` for every flavour but nightly — are behaviour-critical and must never drift. A second
-checked-in descriptor would drift on them the first time one was edited, and would put the version
-in a fifth file that `ci/bump-version.py`, `ci/check-package.py` and `release.yml`'s tag guard all
-already read. The selftest asserts the set of moved keys is exactly `{id, title}` for debug and
-`{id, title, version}` for nightly, so widening either is a decision somebody has to make on
-purpose.
+**PATCH, DO NOT DUPLICATE.** The household fork declares audience presentation in
+`ci/install-identities.json`: debug is Cinema Parents and nightly is Cinema Kids.
+Their IDs and storage identities remain the original independent flavors. Only
+`id`, `title`, `iconColor` and (for nightly only) the dated package `version` may
+move. Other fields, including entry point, permissions, lifecycle and icon
+filenames, remain single-sourced in `pkg/appinfo.json`. The selftest checks the
+exact changed-key sets, so presentation cannot silently change runtime behavior.
 
 **THE STABLE TRANSFORM IS THE IDENTITY, and that is asserted rather than intended** (`--selftest`,
 run by `make check`). It is the whole mechanical guarantee that adding a second identity cannot
@@ -91,7 +87,7 @@ def _nightly_date(nightly_date: "str | None") -> str:
 def appinfo_for(flavor: str, nightly_date: "str | None" = None) -> dict:
     """The tracked `pkg/appinfo.json`, re-pointed at `flavor`. Identity when flavor == stable.
 
-    Only `id`, `title` and — for `nightly` ONLY — `version` move. The icon FIELDS deliberately do
+    Only install identity/presentation (`id`, `title`, `iconColor`) and — for `nightly` ONLY — `version` move. The icon FIELDS deliberately do
     not: they name `icon.png` and `largeIcon.png`, and the badged artwork is staged over those
     basenames from `pkg/dev/` (or `pkg/nightly/`) by the Makefile — so the flavour lives in the directory a file is
     read from and never in the name it is packaged under. `ci/check-package.py` grades the payload
@@ -101,13 +97,16 @@ def appinfo_for(flavor: str, nightly_date: "str | None" = None) -> dict:
     if flavor == "stable":
         return a
     a["id"] = app_id(flavor)
+    # Household profiles declare their display title/background in the shared identity data.
     # The launcher shows this under the tile. Two tiles reading `PlxNative` would be a coin flip
     # every time, and the badged icon only helps someone who is looking at the artwork rather than
     # at a list — `dev/listApps` and SAM's own dialogs show the title, not the icon. Nightly's own
     # title is a product decision ("PlxNative Nightly", capitalised) rather than the bare lowercase
     # suffix debug uses, so it is spelled out rather than titlecased generically.
     suffix = "Nightly" if flavor == "nightly" else flavor
-    a["title"] = f"{a['title']} {suffix}"
+    identity = next(identity for identity in INSTALL_IDENTITIES if identity["name"] == flavor)
+    a["title"] = identity.get("display_title", f"{a['title']} {suffix}")
+    a["iconColor"] = identity.get("icon_color", a["iconColor"])
     # NIGHTLY ONLY: the package version itself moves — to the next minor (or next patch, on a
     # maintenance line) with the CUT DATE as its patch (`version_rule.nightly_package_triplet`),
     # e.g. `0.7.20260919`. Two properties are wanted and both come from that. It is ahead of
@@ -181,8 +180,8 @@ def _selftest() -> int:
     # Everything else must be untouched. A drifted `requiredMemory` or `transparent` is a
     # behaviour change that would show up only on the television, on the flavour nobody releases.
     moved = {k for k in tracked_appinfo if dbg.get(k) != tracked_appinfo[k]}
-    check(moved == {"id", "title"},
-          f"only id and title differ between debug and stable (also saw {sorted(moved - {'id', 'title'})})")
+    check(moved == {"id", "title", "iconColor"},
+          f"only id, title and iconColor differ between debug and stable (also saw {sorted(moved - {'id', 'title', 'iconColor'})})")
 
     # Nightly is a different app too, AND its package version moves ahead of the tracked one —
     # the one flavour allowed to widen the `moved` set, asserted explicitly rather than by relaxing
@@ -190,8 +189,8 @@ def _selftest() -> int:
     nightly = appinfo_for("nightly", "20260919")
     check(nightly["id"] == f"{STABLE_ID}.nightly",
           f'nightly appinfo id == {STABLE_ID}.nightly (got {nightly["id"]})')
-    check(nightly["title"] == f'{tracked_appinfo["title"]} Nightly',
-          f'nightly appinfo title is "{tracked_appinfo["title"]} Nightly" (got {nightly["title"]!r})')
+    check(nightly["title"] == "Cinema Kids",
+          f'nightly appinfo title is Cinema Kids (got {nightly["title"]!r})')
     _tracked_major, _tracked_minor, _ = (int(x) for x in tracked_appinfo["version"].split("."))
     _release_line = _release_line_content()
     _want_major_minor = (f"{_tracked_major}.{_tracked_minor + 1}" if _release_line is None

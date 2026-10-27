@@ -1592,8 +1592,12 @@ for badged in ("pkg/dev", "pkg/nightly"):
         # tile. The badge is a BOTTOM bar for this reason — pixel (1,1) is untouched, so one
         # iconColor stays correct for both flavours.
         dbg_corner = Image.open(ROOT / badged / "largeIcon.png").convert("RGB").getpixel((1, 1))
-        check(max(abs(a - b) for a, b in zip(dbg_corner, declared)) <= 2,
-              f"{badged}'s badged tile keeps iconColor {appinfo['iconColor']} at its corner rgb{dbg_corner}")
+        profile = "debug" if badged == "pkg/dev" else "nightly"
+        identity = next(item for item in flavor.INSTALL_IDENTITIES if item["name"] == profile)
+        colour = identity.get("icon_color", json.loads((ROOT / "pkg/appinfo.json").read_text())["iconColor"])
+        profile_background = tuple(int(colour.lstrip("#")[i:i + 2], 16) for i in (0, 2, 4))
+        check(max(abs(a - b) for a, b in zip(dbg_corner, profile_background)) <= 2,
+              f"{badged}'s tile matches its profile iconColor {colour} at its corner rgb{dbg_corner}")
 check(appinfo.get("splashBackground") == "splash.png",
       "appinfo declares splashBackground: splash.png")
 

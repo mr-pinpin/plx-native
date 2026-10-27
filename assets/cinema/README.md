@@ -36,3 +36,12 @@ upstream software credits and its separate trademark notice remain intact.
 The icon is opaque and contains no text. The splash contains only the word
 “Cinema”. Dark margins leave room for the operating system's clipping and TV
 safe areas.
+
+## Kids and Parents editions
+
+The existing single-PinPin navy popcorn icon belongs to the Kids edition.
+`cinema-parents-icon-master-v1.png` is a separately generated two-adult portrait
+with a burgundy background. Its size exports use the same naming convention.
+`parents-provenance-v1.json` records its exact prompt, references and hashes.
+The narrow new-output distribution grant above also covers these Parents
+edition files; it does not extend to the original book reference artwork.

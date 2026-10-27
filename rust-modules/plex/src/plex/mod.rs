@@ -17,6 +17,7 @@
 #![allow(dead_code)]
 
 mod client;
+pub mod audience;
 pub mod identity; // ONE X-Plex-* identity for both transports (plex.tv headers + PMS query)
 mod models;
 mod params;
