@@ -659,6 +659,10 @@ pub fn frames() -> i32 {
 pub fn seen_frame() -> bool {
     SHARED.seen_frame.load(Relaxed)
 }
+/// Whether this playback actually opened a verified local cache inode, rather than its URL fallback.
+pub fn local_source() -> bool {
+    SHARED.local_source.load(std::sync::atomic::Ordering::Acquire)
+}
 pub fn duration_ns() -> i64 {
     SHARED.duration_ns.load(Relaxed)
 }

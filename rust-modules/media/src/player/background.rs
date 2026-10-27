@@ -41,9 +41,36 @@ pub fn start(ps:&mut PlaybackSession,pa:&mut PlayerAdapter,source:&Source)->bool
     super::start_bufferfeed(ps,pa)
 }
 
+/// Keep a verified local looping background on the same decoder and hardware plane. A
+/// seek before the EOS tail avoids the stop/Load pair that unbinds the visible surface.
+/// The gesture owner always wins; ordinary streams retain their existing EOS restart.
+pub fn maintain_loop(ps:&PlaybackSession,source:&Source,gesture_owned:bool)->bool{
+    let ready=!super::loading(ps)&&super::seek_pending()<0&&!super::seek_preroll_active()&&super::seen_frame();
+    if local_loop_seek(source.looping,super::local_source(),gesture_owned,ready,super::playpos_ns(),super::duration_ns()){
+        super::request_seek(0);
+        return true;
+    }
+    false
+}
+fn local_loop_seek(looping:bool,local:bool,owned:bool,ready:bool,position:i64,duration:i64)->bool{
+    looping&&local&&!owned&&ready&&duration>8_000_000_000&&position>=duration-4_000_000_000
+}
+
 #[cfg(test)]
 mod tests{
     use super::*;
+    #[test]
+    fn verified_local_loop_seeks_before_eos_without_retiring_the_decoder(){
+        let second=1_000_000_000;
+        assert!(local_loop_seek(true,true,false,true,116*second,120*second));
+        assert!(!local_loop_seek(true,true,false,true,115*second,120*second));
+        assert!(!local_loop_seek(true,true,true,true,116*second,120*second));
+        assert!(!local_loop_seek(true,true,false,false,116*second,120*second));
+        assert!(!local_loop_seek(true,false,false,true,116*second,120*second));
+        assert!(!local_loop_seek(false,true,false,true,116*second,120*second));
+        assert!(!local_loop_seek(true,true,false,true,0,0));
+        assert!(!local_loop_seek(true,true,false,true,1*second,2*second));
+    }
     #[test]
     fn silent_background_declaration_is_bounded_and_does_not_invent_a_lower_frame_rate(){
         let mut source:Source=serde_json::from_str(r#"{"url":"http://192.0.2.1/forest.mp4","videoCodec":"hevc","fps":60,"width":3840,"height":2160}"#).unwrap();
