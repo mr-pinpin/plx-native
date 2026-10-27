@@ -115,7 +115,7 @@ impl Runtime {
             self.trace_action(now,&action,ready,position,duration,accepted);
         }else{self.shuttle.forget();}
         let Some(source)=self.managed.as_ref().or(self.config.background.as_ref()) else{return;};
-        let looping_locally=plx_media::route::is_background(ps)&&plx_media::player::background::maintain_loop(ps,source,self.shuttle.holding());
+        let looping_locally=plx_media::route::is_background(ps)&&plx_media::player::background::maintain_loop(ps,source,self.shuttle.blocks_loop());
         if !looping_locally&&plx_media::player::ended()&&plx_media::route::is_background(ps)&&source.looping{
             plx_media::player::stop_bufferfeed(ps,pa);
         }
@@ -186,7 +186,7 @@ mod control_tests{
         config.background=Some(serde_json::from_str(r#"{"url":"http://192.0.2.1/library/parts/1/file.mp4","videoCodec":"hevc","fps":30,"width":3840,"height":2160}"#).unwrap());
         config.apps.push(ApplicationConfig{id:"example".into(),title:"Example".into(),icon:None,scene:None,pixels:None});
         let mut runtime=Runtime::new(config);assert!(runtime.controls_enabled());
-        runtime.control_pointer(960.0,300.0,false);
+        runtime.control_pointer(200.0,300.0,false);
         assert_eq!(runtime.shuttle.step(0,true,1_000_000_000,120_000_000_000),super::super::family_shuttle::Action::Pause);
         runtime.control_pointer(960.0,900.0,true);
         assert_eq!(runtime.shuttle.step(1,true,1_000_000_000,120_000_000_000),super::super::family_shuttle::Action::Resume);

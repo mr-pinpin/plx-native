@@ -66,6 +66,15 @@ impl Shuttle {
     pub fn holding(&self) -> bool {
         self.holding || self.pointer.is_some()
     }
+    pub fn native_playing(&self) -> bool {
+        !self.holding
+            && self
+                .pointer
+                .is_some_and(|(point, _)| ((point[0] as f64 - 0.5) * 2.0).abs() <= CENTRE_ZONE)
+    }
+    pub fn blocks_loop(&self) -> bool {
+        self.holding() && !self.native_playing()
+    }
     pub fn release(&mut self) {
         self.pointer = None;
         self.last_position = None;
@@ -82,6 +91,7 @@ impl Shuttle {
         if accepted {
             self.holding = false;
             self.last_resume = None;
+            self.last_pause = None;
         }
     }
     pub fn step(&mut self, now: u32, ready: bool, position: i64, duration: i64) -> Action {
@@ -112,6 +122,23 @@ impl Shuttle {
             .unwrap_or(0) as f64
             / 1000.0;
         self.last_tick = Some(now);
+        let signed = (point.unwrap().0[0] as f64 - 0.5) * 2.0;
+        if signed.abs() <= CENTRE_ZONE {
+            // Normal native Play is still owned by this gesture. Do not re-pause
+            // or emulate +1x with seeks; only leave an acknowledged scrub pause.
+            self.target = Some(anchor as f64);
+            self.last_seek = None;
+            if self.holding
+                && ready
+                && self
+                    .last_resume
+                    .is_none_or(|last| now.wrapping_sub(last) >= SEEK_MS)
+            {
+                self.last_resume = Some(now);
+                return Action::Resume;
+            }
+            return Action::None;
+        }
         if !self.holding {
             if !ready {
                 return Action::None;
@@ -127,14 +154,8 @@ impl Shuttle {
             self.target = Some(anchor as f64);
             return Action::Pause;
         }
-        let signed = (point.unwrap().0[0] as f64 - 0.5) * 2.0;
-        // The centre advances normally through this same owned timeline. It never
-        // releases to a competing ambient clock or freezes a moving gesture.
-        let velocity = if signed.abs() <= CENTRE_ZONE {
-            1.0
-        } else {
-            signed.signum() * (signed.abs() - CENTRE_ZONE) / (1.0 - CENTRE_ZONE) * MAX_SPEED
-        };
+        let velocity =
+            signed.signum() * (signed.abs() - CENTRE_ZONE) / (1.0 - CENTRE_ZONE) * MAX_SPEED;
         // Reuse the player's existing priming boundary. Ambient playback may reach
         // natural EOF; a requested seek must never wrap into its unprimeable tail.
         let target = (self.target.unwrap_or(anchor as f64) + velocity * dt * 1e9)
@@ -166,6 +187,83 @@ mod tests {
     use super::*;
     const SECOND: i64 = 1_000_000_000;
     #[test]
+    fn centre_native_play_never_pauses_or_repeatedly_seeks() {
+        let mut p = Shuttle::default();
+        for now in (1000..=1500).step_by(100) {
+            p.pointer_motion(Some([0.5, if now % 200 == 0 { 0.4 } else { 0.6 }]), now);
+            assert_eq!(
+                p.step(
+                    now,
+                    true,
+                    (now as i64 - 1000) * 1_000_000 + 60 * SECOND,
+                    120 * SECOND
+                ),
+                Action::None
+            );
+            assert!(p.holding());
+            assert!(!p.blocks_loop());
+        }
+    }
+    #[test]
+    fn left_to_centre_resumes_once_then_keeps_native_play_owned() {
+        let mut p = Shuttle::default();
+        p.pointer(Some(0.0), 1000);
+        assert_eq!(p.step(1000, true, 60 * SECOND, 120 * SECOND), Action::Pause);
+        p.pointer_motion(Some([0.5, 0.4]), 1100);
+        assert_eq!(p.step(1100, false, 60 * SECOND, 120 * SECOND), Action::None);
+        assert_eq!(
+            p.step(1200, true, 60 * SECOND, 120 * SECOND),
+            Action::Resume
+        );
+        p.acknowledge_resume(true);
+        assert_eq!(
+            p.step(1300, true, 60 * SECOND + 100_000_000, 120 * SECOND),
+            Action::None
+        );
+        assert!(p.holding());
+        assert!(!p.blocks_loop());
+    }
+    #[test]
+    fn refused_centre_play_retries_without_repausing_then_idle_handoff_is_actuator_free() {
+        let mut p = Shuttle::default();
+        p.pointer(Some(0.0), 1000);
+        p.step(1000, true, 60 * SECOND, 120 * SECOND);
+        p.pointer_motion(Some([0.5, 0.4]), 1100);
+        assert_eq!(
+            p.step(1100, true, 60 * SECOND, 120 * SECOND),
+            Action::Resume
+        );
+        p.acknowledge_resume(false);
+        assert_eq!(p.step(1200, true, 60 * SECOND, 120 * SECOND), Action::None);
+        assert!(p.blocks_loop());
+        assert_eq!(
+            p.step(1350, true, 60 * SECOND, 120 * SECOND),
+            Action::Resume
+        );
+        p.acknowledge_resume(true);
+        assert_eq!(p.step(1400, true, 60 * SECOND, 120 * SECOND), Action::None);
+        assert!(p.holding());
+        assert!(!p.blocks_loop());
+        assert_eq!(p.step(2100, true, 61 * SECOND, 120 * SECOND), Action::None);
+        assert!(!p.holding());
+    }
+    #[test]
+    fn leaving_native_centre_pauses_before_seek_and_centre_allows_owned_local_loop() {
+        let mut p = Shuttle::default();
+        p.pointer_motion(Some([0.5, 0.5]), 1000);
+        p.step(1000, true, 116 * SECOND, 120 * SECOND);
+        assert!(
+            !p.blocks_loop(),
+            "the existing local loop owner must remain eligible at duration minus four seconds"
+        );
+        p.pointer_motion(Some([0.0, 0.5]), 1100);
+        assert_eq!(
+            p.step(1100, true, 116 * SECOND, 120 * SECOND),
+            Action::Pause
+        );
+        assert!(p.blocks_loop());
+    }
+    #[test]
     fn unchanged_packets_release_after_one_second_and_cannot_reclaim_motion() {
         let mut p = Shuttle::default();
         p.pointer_motion(Some([0.9, 0.5]), 1000);
@@ -187,12 +285,10 @@ mod tests {
     fn moving_vertically_at_centre_keeps_exclusive_normal_speed() {
         let mut p = Shuttle::default();
         p.pointer_motion(Some([0.5, 0.4]), 1000);
-        assert_eq!(p.step(1000, true, 60 * SECOND, 120 * SECOND), Action::Pause);
+        assert_eq!(p.step(1000, true, 60 * SECOND, 120 * SECOND), Action::None);
         p.pointer_motion(Some([0.5, 0.6]), 1050);
-        assert_eq!(
-            p.step(1100, true, 60 * SECOND, 120 * SECOND),
-            Action::Seek(60 * SECOND + 100_000_000)
-        );
+        assert_eq!(p.step(1100, true, 60 * SECOND, 120 * SECOND), Action::None);
+        assert!(p.native_playing());
         p.pointer_motion(Some([0.5, 0.7]), 1900);
         assert_ne!(
             p.step(2100, true, 60 * SECOND, 120 * SECOND),
@@ -210,7 +306,7 @@ mod tests {
     fn continuous_xy_motion_never_releases_and_pending_resume_still_owns() {
         let mut p = Shuttle::default();
         for now in (0..=5000).step_by(100) {
-            p.pointer_motion(Some([0.5, if now % 200 == 0 { 0.4 } else { 0.6 }]), now);
+            p.pointer_motion(Some([0.2, if now % 200 == 0 { 0.4 } else { 0.6 }]), now);
             assert_ne!(p.step(now, true, 60 * SECOND, 120 * SECOND), Action::Resume);
             assert!(p.holding());
         }
@@ -288,19 +384,13 @@ mod tests {
         );
     }
     #[test]
-    fn centre_advances_exclusively_and_release_resumes_ambient() {
+    fn centre_native_play_releases_ownership_without_an_extra_actuator() {
         let mut p = Shuttle::default();
         p.pointer(Some(0.5), 1000);
-        assert_eq!(p.step(1000, true, 60 * SECOND, 120 * SECOND), Action::Pause);
-        assert_eq!(
-            p.step(1100, true, 60 * SECOND, 120 * SECOND),
-            Action::Seek(60 * SECOND + 100_000_000)
-        );
+        assert_eq!(p.step(1000, true, 60 * SECOND, 120 * SECOND), Action::None);
+        assert_eq!(p.step(1100, true, 60 * SECOND, 120 * SECOND), Action::None);
         p.release();
-        assert_eq!(
-            p.step(1110, true, 60 * SECOND, 120 * SECOND),
-            Action::Resume
-        );
+        assert_eq!(p.step(1110, true, 60 * SECOND, 120 * SECOND), Action::None);
         p.acknowledge_resume(true);
         assert_eq!(p.step(1120, true, 60 * SECOND, 120 * SECOND), Action::None);
     }
@@ -347,11 +437,11 @@ mod tests {
     #[test]
     fn stale_hidden_and_scene_release_do_not_leave_a_pause_owned() {
         let mut p = Shuttle::default();
-        p.pointer(Some(0.5), 1000);
+        p.pointer(Some(0.0), 1000);
         p.step(1000, true, 0, 120 * SECOND);
         assert_eq!(p.step(4001, true, 0, 120 * SECOND), Action::Resume);
         p.acknowledge_resume(true);
-        p.pointer(Some(0.5), 2000);
+        p.pointer(Some(0.0), 2000);
         p.step(2000, true, 0, 120 * SECOND);
         p.forget();
         assert_eq!(p.step(2001, true, 0, 120 * SECOND), Action::None);
@@ -372,7 +462,7 @@ mod tests {
     #[test]
     fn release_waits_for_an_inflight_seek_before_resuming() {
         let mut p = Shuttle::default();
-        p.pointer(Some(0.5), 1000);
+        p.pointer(Some(0.0), 1000);
         p.step(1000, true, 0, 120 * SECOND);
         p.release();
         assert_eq!(p.step(1010, false, 0, 120 * SECOND), Action::None);
@@ -381,7 +471,7 @@ mod tests {
     #[test]
     fn refused_resume_retains_ownership_and_retries_until_acknowledged() {
         let mut p = Shuttle::default();
-        p.pointer(Some(0.5), 1000);
+        p.pointer(Some(0.0), 1000);
         p.step(1000, true, 0, 120 * SECOND);
         p.release();
         assert_eq!(p.step(1100, true, 0, 120 * SECOND), Action::Resume);
@@ -394,7 +484,7 @@ mod tests {
     #[test]
     fn refused_pause_preserves_the_fresh_pointer_for_a_bounded_retry() {
         let mut p = Shuttle::default();
-        p.pointer(Some(0.5), 1000);
+        p.pointer(Some(0.0), 1000);
         assert_eq!(p.step(1000, true, 0, 120 * SECOND), Action::Pause);
         p.acknowledge_pause(false);
         assert_eq!(p.step(1100, true, 0, 120 * SECOND), Action::None);
