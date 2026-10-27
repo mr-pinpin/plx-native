@@ -212,6 +212,7 @@ mod tests {
     }
     #[test]
     fn three_lost_acknowledgements_within_grace_preserve_video_and_recovery_resets_it(){
+        let _serial=plx_base::testlock::serial();
         super::super::clock::set_replay(100);
         let mut c=controller();c.select("atlas");c.active=Some(grant("atlas"));
         for at in [100,2100,4100]{
@@ -229,6 +230,7 @@ mod tests {
     }
     #[test]
     fn elapsed_fifteen_second_grace_yields_home_once_and_fatal_is_immediate(){
+        let _serial=plx_base::testlock::serial();
         super::super::clock::set_replay(u32::MAX-2000);
         let mut c=controller();c.select("atlas");c.active=Some(grant("atlas"));
         assert!(c.accept(Reply::Heartbeat(Heartbeat::Transient),true).is_none());
