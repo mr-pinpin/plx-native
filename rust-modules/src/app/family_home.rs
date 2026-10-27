@@ -3,7 +3,7 @@ use plx_media::player::background::Source;
 use plx_screens::family_home::Application;
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct Config {version:u32,#[serde(default,rename="pointerShuttle")]pointer_shuttle:bool,#[serde(default,rename="pointerDiagnostics")]pointer_diagnostics:bool,pub background:Option<Source>,apps:Vec<ApplicationConfig>,#[serde(default)] controls:Option<super::family_input::Config>,#[serde(default)] rendering:Option<super::family_scene::Config>,#[serde(default,rename="cover")] _retired_cover:Option<String>}
+pub(crate) struct Config {version:u32,#[serde(default,rename="warmBackgroundTrial")]warm_background_trial:bool,#[serde(default,rename="pointerShuttle")]pointer_shuttle:bool,#[serde(default,rename="pointerDiagnostics")]pointer_diagnostics:bool,pub background:Option<Source>,apps:Vec<ApplicationConfig>,#[serde(default)] controls:Option<super::family_input::Config>,#[serde(default)] rendering:Option<super::family_scene::Config>,#[serde(default,rename="cover")] _retired_cover:Option<String>}
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ApplicationConfig{id:String,title:String,#[serde(default)] icon:Option<String>,#[serde(default)] scene:Option<String>,#[serde(skip)] pixels:Option<plx_ui::owned_image::Pixels>}
@@ -25,9 +25,11 @@ impl Config {
         Ok(config)
     }
     pub fn applications(&self)->Vec<Application>{self.apps.iter().map(|app|Application{id:app.id.clone(),title:app.title.clone(),icon:app.pixels.clone()}).collect()}
-    pub fn empty()->Self{Self{version:1,pointer_shuttle:false,pointer_diagnostics:false,background:None,apps:Vec::new(),controls:None,rendering:None,_retired_cover:None}}
+    pub fn empty()->Self{Self{version:1,warm_background_trial:false,pointer_shuttle:false,pointer_diagnostics:false,background:None,apps:Vec::new(),controls:None,rendering:None,_retired_cover:None}}
 }
 impl Runtime {
+    pub fn warm_background_trial(&self)->bool{self.config.warm_background_trial}
+
     pub fn application(&self,index:u8)->Option<&str>{self.config.apps.get(index as usize).map(|app|app.id.as_str())}
     pub fn new(mut config:Config)->Self{let scene=config.rendering.take().map(super::family_scene::Controller::new);let input=if config.pointer_shuttle{None}else{config.controls.as_ref().and_then(super::family_input::Bridge::start)};Self{config,shuttle:Default::default(),trace_input_at:None,trace_action_at:None,trace_state_at:None,retry_at:0,status_at:0,snapshot_at:0,snapshot:None,snapshot_requested:0,worker:None,input,scene_click:false,scene,managed:None,foreground:false,wake:false}}
     pub fn launch_scene(&mut self,index:u8)->bool{

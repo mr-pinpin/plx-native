@@ -608,6 +608,14 @@ fn acb_playstate_ready(stage: shared::Stage) -> bool {
     stage >= shared::Stage::Streaming
 }
 
+/// Identity of the existing exported window owned by this native Load, without creating one.
+/// No window is a refusal for the opt-in retained-background experiment.
+pub fn background_window_identity()->Option<String>{
+    if sink().window_mode()!=VP_EXPORTED{return None;}
+    let id=sink().window_id().to_string_lossy().into_owned();
+    (!id.is_empty()).then_some(id)
+}
+
 /// **Answer the Player machine's video-plane question from the seam** (spec §9), once per frame,
 /// at §3.3 step 8 — before the opaque-region call and the present gate read the bit.
 ///

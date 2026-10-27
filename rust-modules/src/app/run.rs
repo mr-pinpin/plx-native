@@ -944,6 +944,8 @@ unsafe fn ingest_sdl_event_with_window(app: &mut App, fr: &mut Frame,
         // it registered is stopped — and park the session back where the first suspend left it.
         // The suspend below would otherwise be refused (`awaiting_load`) and the flight would run
         // on, landing a Load on a backgrounded window.
+        let retained_background=try_retain_family_background(app);
+        if !retained_background {
         if super::lifecycle::park_pending_foreground_flight(
             &mut app.player.lifecycle,
             &mut app.player.session,
@@ -974,6 +976,7 @@ unsafe fn ingest_sdl_event_with_window(app: &mut App, fr: &mut Frame,
             // now, so destroying entries destroys the way back. See
             // `an_app_switch_parks_the_page_stack_and_gives_the_same_entries_back`.
         }
+        } // Experimental retained Load; ordinary playback always takes the park above.
         // The session ends only after the park above: a crash inside the buffer-feed suspend
         // leaves it open, to be reported crashed or abnormal on the next boot.
         plx_telemetry::telemetry::session::lifecycle(et);
@@ -1587,6 +1590,50 @@ unsafe fn ingest_sdl_event_with_window(app: &mut App, fr: &mut Frame,
 /// clock, drop the Engine, keep the session and the page stack. An app switch does this, and so
 /// does the pipeline taking the video decoder back ([`park_on_decoder_release`]); the restore is
 /// the foreground lifecycle's claim either way.
+// Opt-in feasibility trial only: never retain an account movie, URL fallback or unresolved Load.
+fn try_retain_family_background(app:&mut App)->bool{
+    if !app.family_home.as_ref().is_some_and(|home|home.warm_background_trial()){return false;}
+    let current=app.adapters.player.engine().map(|engine|engine.route_start);
+    let window=plx_media::player::background_window_identity();
+    let eligible=plx_media::route::is_background(&app.player.session)&&plx_media::player::local_source()
+        &&app.player.video_plane_bound&&plx_media::player::seen_frame()&&window.is_some();
+    if let Some(saved)=app.player.lifecycle.retained_background(){
+        if current!=Some(saved.attempt){app.player.lifecycle.abandon_retained_background();return false;}
+        if !eligible||window.as_deref()!=Some(saved.window_id.as_str()){park_playback(app);return false;}
+        return true; // WILL/DID pair must not Pause or snapshot the clock a second time.
+    }
+    let Some(attempt)=current else{return false;};
+    if !eligible||app.player.lifecycle.awaiting_load()||plx_media::route::play_pending()||plx_media::player::seek_pending()>=0||plx_media::player::seek_preroll_active()||plx_media::player::frames()<=0{return false;}
+    let saved_ns=intended_pos(&mut app.player.session);
+    let clock=super::lifecycle::clock_for_suspend_now(&app.player.lifecycle);
+    if !super::lifecycle::set_transport_paused(&mut app.adapters.player,true){log("warm-background trial: Pause refused; ordinary reload");return false;}
+    if !app.player.lifecycle.retain_background(attempt,saved_ns,clock,window.unwrap()){return false;}
+    if let Some(home)=app.family_home.as_mut(){home.release_controls();}
+    app.ptr.button_down=false;
+    log("warm-background trial: same verified-local Load paused and retained");true
+}
+fn settle_retained_family_background(app:&mut App,superseded:bool){
+    if app.player.lifecycle.retained_background().is_none(){return;}
+    // Consume any actual decoder-revocation callback BEFORE considering the retained Load.
+    park_on_decoder_release(app);
+    let Some(saved)=app.player.lifecycle.retained_background()else{return;};
+    let current=app.adapters.player.engine().map(|engine|engine.route_start);
+    if current!=Some(saved.attempt){
+        app.player.lifecycle.abandon_retained_background();log("warm-background trial: exact Load changed; newer owner preserved");return;
+    }
+    let window=plx_media::player::background_window_identity();
+    let frames=plx_media::player::frames();
+    if !superseded&&window.as_deref()==Some(saved.window_id.as_str())&&app.player.video_plane_bound&&plx_media::player::local_source()
+        &&plx_media::player::seen_frame()&&!plx_media::player::ended()
+        &&super::lifecycle::set_transport_paused(&mut app.adapters.player,saved.clock==super::lifecycle::ForegroundClock::Paused)
+        &&app.player.lifecycle.finish_retained_background(saved.attempt){
+        app.player.lifecycle.probe_retained_resume(saved,frames,clock::now());
+        log("warm-background trial: exact Load/window accepted foreground transport; awaiting fresh presentation");return;
+    }
+    log("warm-background trial: ownership/resource/Resume check failed; ordinary reload");
+    park_playback(app);
+}
+
 fn park_playback(app: &mut App) {
     // INTENDED, not published: this snapshot is the only thing the foreground
     // restore has, and `suspend_bufferfeed` below drops the pending seek target
@@ -1627,7 +1674,7 @@ fn park_on_decoder_release(app: &mut App) {
         super::content::halt_preview_now(&mut app.player.session, &mut app.adapters.player);
         return;
     }
-    if !app.adapters.player.is_live() || app.player.lifecycle.awaiting_load() {
+    if !app.adapters.player.is_live() || (app.player.lifecycle.awaiting_load()&&app.player.lifecycle.retained_background().is_none()) {
         return;
     }
     log("player: decoder released by the pipeline — parked until the next press");
@@ -1728,6 +1775,7 @@ fn did_foreground_with_link(app: &mut App) -> ForegroundActivation {
         if let Some(home)=app.family_home.as_mut(){home.relaunch();}
     }
     let out = app.deeplink.step(event, &env);
+    settle_retained_family_background(app,out.leaves_playback);
     let input = if out.leaves_playback {
         ForegroundInput::DidForegroundSuperseded
     } else {
@@ -1818,6 +1866,19 @@ pub(crate) unsafe fn playback_tick(app: &mut App, fr: &mut Frame) {
                 &mut app.adapters.player,
                 fr.now,
             );
+        }
+        if app.window_activity.allow_present(true)&&app.player.lifecycle.has_retained_probe(){
+            let current=app.adapters.player.engine().map(|engine|engine.route_start);
+            let window=plx_media::player::background_window_identity().unwrap_or_default();
+            match app.player.lifecycle.retained_progress(current,&window,plx_media::player::frames(),fr.now,plx_media::player::seek_pending()>=0||plx_media::player::seek_preroll_active()||super::lifecycle::paused()){
+                Some(plx_media::player::lifecycle::RetainedProgress::Cancelled)=>log("warm-background trial: presentation probe yielded to a new timeline"),
+                Some(plx_media::player::lifecycle::RetainedProgress::Confirmed)=>log("warm-background trial: fresh presentation confirmed"),
+                Some(plx_media::player::lifecycle::RetainedProgress::Reload)=>{
+                    log("warm-background trial: retained presentation missing; cold fallback");park_playback(app);
+                    if matches!(did_foreground_with_link(app),ForegroundActivation::Launched){finish_foreground_launch(app);}
+                },
+                _=>{},
+            }
         }
         // **The ONE place the Player machine is asked whether the hardware video plane is bound**
         // (spec §9), immediately after the pump that advances the ACB bind transaction and BEFORE

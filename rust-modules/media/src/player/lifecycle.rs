@@ -228,19 +228,68 @@ pub enum ForegroundState<Attempt = crate::route::RouteStartAttempt> {
     },
 }
 
+/// Experimental same-Load background park; ordinary lifecycle states remain authoritative.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RetainedBackground<Attempt> {pub attempt:Attempt,pub saved_ns:i64,pub clock:ForegroundClock,pub window_id:String,id:u64}
+#[derive(Debug)]
+struct RetainedProbe<Attempt>{park:RetainedBackground<Attempt>,frames:i32,at:u32}
+#[derive(Clone,Copy,Debug,PartialEq,Eq)]
+pub enum RetainedProgress{Pending,Confirmed,Reload,Replaced,Cancelled}
+
 #[derive(Debug)]
 pub struct ForegroundLifecycle<Attempt = crate::route::RouteStartAttempt> {
     pub state: ForegroundState<Attempt>,
     pub next_id: u64,
+    retained_background: Option<RetainedBackground<Attempt>>,
+    retained_probe: Option<RetainedProbe<Attempt>>,
 }
 
 impl<Attempt: Copy + PartialEq> ForegroundLifecycle<Attempt> {
     pub const IDLE: Self = Self {
         state: ForegroundState::Idle,
         next_id: 0,
+        retained_background: None,
+        retained_probe: None,
     };
 
+    pub fn retained_background(&self)->Option<RetainedBackground<Attempt>>{self.retained_background.clone()}
+    /// Called only after the exact live native Load accepted Pause.
+    pub fn retain_background(&mut self,attempt:Attempt,saved_ns:i64,clock:ForegroundClock,window_id:String)->bool{
+        if !matches!(self.state,ForegroundState::Idle){return false;}
+        self.suspend(saved_ns,clock);
+        self.retained_background=Some(RetainedBackground{attempt,saved_ns,clock,window_id,id:self.next_id});true
+    }
+    /// A matching accepted Resume consumes only its own park, never a newer lifecycle claim.
+    pub fn finish_retained_background(&mut self,attempt:Attempt)->bool{
+        let Some(saved)=self.retained_background.as_ref() else{return false;};
+        if saved.attempt!=attempt||!matches!(self.state,ForegroundState::Suspended{id,..} if id==saved.id){return false;}
+        self.retained_background=None;self.state=ForegroundState::Idle;true
+    }
+    /// A replacement Engine belongs to its newer owner; do not tear it down as the old park.
+    pub fn abandon_retained_background(&mut self){
+        if let Some(saved)=self.retained_background.take(){
+            if matches!(self.state,ForegroundState::Suspended{id,..} if id==saved.id){self.state=ForegroundState::Idle;}
+        }
+    }
+    pub fn probe_retained_resume(&mut self,saved:RetainedBackground<Attempt>,frames:i32,now:u32){
+        if saved.clock==ForegroundClock::Playing&&matches!(self.state,ForegroundState::Idle)&&saved.id==self.next_id{
+            self.retained_probe=Some(RetainedProbe{park:saved,frames,at:now});
+        }
+    }
+    pub fn has_retained_probe(&self)->bool{self.retained_probe.is_some()}
+    pub fn retained_progress(&mut self,current:Option<Attempt>,window:&str,frames:i32,now:u32,timeline_changed:bool)->Option<RetainedProgress>{
+        let probe=self.retained_probe.as_ref()?;
+        let result=if current!=Some(probe.park.attempt){RetainedProgress::Replaced}
+            else if timeline_changed||frames<probe.frames{RetainedProgress::Cancelled}
+            else if window!=probe.park.window_id{RetainedProgress::Reload}
+            else if frames>probe.frames{RetainedProgress::Confirmed}
+            else if now.wrapping_sub(probe.at)>=750{RetainedProgress::Reload}
+            else{RetainedProgress::Pending};
+        if matches!(result,RetainedProgress::Confirmed|RetainedProgress::Replaced|RetainedProgress::Cancelled){self.retained_probe=None;}
+        Some(result)
+    }
     pub fn suspend(&mut self, saved_ns: i64, clock: ForegroundClock) {
+        self.retained_background=None;self.retained_probe=None;
         self.next_id = self.next_id.wrapping_add(1);
         if self.next_id == 0 {
             self.next_id = 1;
@@ -255,6 +304,8 @@ impl<Attempt: Copy + PartialEq> ForegroundLifecycle<Attempt> {
     /// The physical clock can remain Paused after a refused foreground Play. Preserve the
     /// viewer's newer Playing intent if the OS backgrounds that live session again.
     pub fn clock_for_suspend(&self, transport_paused: bool) -> ForegroundClock {
+        if let Some(saved)=self.retained_background.as_ref(){return saved.clock;}
+        if let Some(probe)=self.retained_probe.as_ref(){return probe.park.clock;}
         match self.state {
             ForegroundState::ClockPending { .. }
             | ForegroundState::Claimed {
@@ -341,6 +392,7 @@ impl<Attempt: Copy + PartialEq> ForegroundLifecycle<Attempt> {
     /// and a Retry starts a fresh play, which supersedes it anyway.
     pub fn claim(&mut self, input: ForegroundInput) -> ForegroundClaimResult {
         if let ForegroundInput::Superseded(successor) = input {
+            self.retained_background=None;self.retained_probe=None;
             return self.supersede(successor);
         }
         let state = self.state;
@@ -2021,12 +2073,12 @@ mod foreground_resume_tests {
         for (name, start, playback, exit) in cases {
             for (successor, (after, result)) in [(Successor::Playback, playback), (Successor::Exit, exit)] {
                 let input = ForegroundInput::Superseded(successor);
-                let mut lifecycle = ForegroundLifecycle::<u64> { state: start, next_id: 1 };
+                let mut lifecycle = ForegroundLifecycle::<u64> { state: start, next_id: 1, retained_background: None, retained_probe: None };
                 assert_eq!(lifecycle.claim(input), result, "{name} x {successor:?}: result");
                 assert_eq!(lifecycle.state, after, "{name} x {successor:?}: state");
 
                 let mut ps = crate::route::PlaybackSession::IDLE;
-                let mut lifecycle = ForegroundLifecycle::<u64> { state: start, next_id: 1 };
+                let mut lifecycle = ForegroundLifecycle::<u64> { state: start, next_id: 1, retained_background: None, retained_probe: None };
                 let mut actuator = FakeActuator::default();
                 let activation = drive_foreground(&mut lifecycle, &mut ps, input, &mut actuator);
                 assert_eq!(lifecycle.state, after, "{name} x {successor:?}: driven state");
@@ -2080,12 +2132,12 @@ mod foreground_resume_tests {
         ];
         for (name, start) in states {
             let want = if matches!(start, ForegroundState::Idle) { Ordinary } else { Suppressed };
-            let mut lifecycle = ForegroundLifecycle::<u64> { state: start, next_id: 1 };
+            let mut lifecycle = ForegroundLifecycle::<u64> { state: start, next_id: 1, retained_background: None, retained_probe: None };
             assert_eq!(lifecycle.claim(ForegroundInput::DidForegroundSuperseded), want, "{name}: result");
             assert_eq!(lifecycle.state, start, "{name}: no state moves");
 
             let mut ps = crate::route::PlaybackSession::IDLE;
-            let mut lifecycle = ForegroundLifecycle::<u64> { state: start, next_id: 1 };
+            let mut lifecycle = ForegroundLifecycle::<u64> { state: start, next_id: 1, retained_background: None, retained_probe: None };
             let mut actuator = FakeActuator::default();
             let activation = drive_foreground(
                 &mut lifecycle, &mut ps, ForegroundInput::DidForegroundSuperseded, &mut actuator);
@@ -2293,5 +2345,57 @@ mod transport_pause_contract_tests {
         );
         assert_eq!(lifecycle.state, ForegroundState::Idle);
         assert!(!paused());
+    }
+}
+
+#[cfg(test)]
+mod retained_background_tests {
+    use super::*;
+    #[test]
+    fn retained_background_preserves_exact_load_clock_and_duplicate_edges(){
+        for clock in [ForegroundClock::Playing,ForegroundClock::Paused]{
+            let mut owner=ForegroundLifecycle::<u64>::IDLE;
+            assert!(owner.retain_background(7,123,clock,"window-7".into()));
+            assert!(!owner.retain_background(7,999,ForegroundClock::Paused,"window-7".into()),"duplicate background cannot resnapshot the artificial pause");
+            assert_eq!(owner.clock_for_suspend(true),clock);
+            assert_eq!(owner.retained_background().unwrap().saved_ns,123);
+            assert!(!owner.finish_retained_background(8),"another Load cannot consume this park");
+            assert!(owner.finish_retained_background(7));
+            assert_eq!(owner.state,ForegroundState::Idle);
+            assert!(owner.retained_background().is_none());
+        }
+    }
+    #[test]
+    fn retained_resume_requires_same_window_and_fresh_presentation_before_deadline(){
+        let mut owner=ForegroundLifecycle::<u64>::IDLE;
+        assert!(owner.retain_background(7,123,ForegroundClock::Playing,"window-7".into()));
+        let saved=owner.retained_background().unwrap();assert!(owner.finish_retained_background(7));
+        owner.probe_retained_resume(saved.clone(),10,1000);
+        assert_eq!(owner.retained_progress(Some(7),"window-7",10,1500,false),Some(RetainedProgress::Pending));
+        assert_eq!(owner.retained_progress(Some(7),"window-7",11,1501,false),Some(RetainedProgress::Confirmed));
+        owner.probe_retained_resume(saved.clone(),11,2000);
+        assert_eq!(owner.retained_progress(Some(7),"different",12,2001,false),Some(RetainedProgress::Reload));
+        owner.probe_retained_resume(saved.clone(),11,3000);
+        assert_eq!(owner.retained_progress(Some(7),"window-7",11,3750,false),Some(RetainedProgress::Reload));
+        assert_eq!(owner.retained_progress(Some(8),"window-7",12,3751,false),Some(RetainedProgress::Replaced));
+        assert!(!owner.has_retained_probe());
+        owner.probe_retained_resume(saved.clone(),12,4000);
+        assert_eq!(owner.retained_progress(Some(7),"window-7",0,4001,false),Some(RetainedProgress::Cancelled),"seek-scoped frame reset must not reload a healthy new seek");
+        owner.probe_retained_resume(saved.clone(),12,4100);
+        assert_eq!(owner.retained_progress(Some(7),"window-7",12,4101,true),Some(RetainedProgress::Cancelled),"explicit pause or seek owns its own timeline");
+        owner.probe_retained_resume(saved,12,4200);owner.suspend(124,ForegroundClock::Playing);
+        assert!(!owner.has_retained_probe(),"resource loss retires a pending warm probe");
+    }
+    #[test]
+    fn ordinary_loss_and_supersession_clear_retention_without_claiming_a_new_load(){
+        let mut owner=ForegroundLifecycle::<u64>::IDLE;
+        assert!(owner.retain_background(7,123,ForegroundClock::Playing,"window-7".into()));
+        owner.suspend(124,owner.clock_for_suspend(true));
+        assert!(owner.retained_background().is_none());
+        assert_eq!(owner.claimable_clock(),Some(ForegroundClock::Playing));
+        owner=ForegroundLifecycle::IDLE;
+        assert!(owner.retain_background(8,125,ForegroundClock::Paused,"window-8".into()));
+        owner.abandon_retained_background();
+        assert!(owner.retained_background().is_none());assert_eq!(owner.state,ForegroundState::Idle);
     }
 }
