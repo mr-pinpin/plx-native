@@ -19,7 +19,7 @@ pub const SHAPE:&str="FamilyHomeV1{entry:u32,idle_ms:u32,alpha:{pos:f32,vel:f32}
 const TILE_W: f32 = 192.0;
 const TILE_H: f32 = 192.0;
 const BOTTOM_INSET: f32 = 96.0;
-const IDLE_MS: u32 = 8000;
+const IDLE_MS: u32 = 30000;
 const GROUP: GroupId = GroupId(0);
 
 pub struct FamilyHomeScreen {
@@ -66,10 +66,11 @@ impl<H: AppLike> Machine<H> for FamilyHomeScreen {
     type Ev = ScreenEvent<H>;
     fn step(&mut self, ev: &Self::Ev, cx: &Cx<'_,H>, fx: &mut Effects<'_,H>) -> Handled {
         match ev {
-            ScreenEvent::App(crate::registry::AppMsg::FamilyWake)=>{self.idle_ms=0;fx.invalidate(Provenance::Lifecycle);Handled::Yes}
+            ScreenEvent::Resume | ScreenEvent::App(crate::registry::AppMsg::FamilyWake)=>{self.idle_ms=0;self.alpha=Spring::at(1.0);fx.invalidate(Provenance::Lifecycle);Handled::Yes}
             ScreenEvent::App(crate::registry::AppMsg::FamilyStatus(status))=>{if self.status!=*status{self.status=status.clone();fx.invalidate(Provenance::Lifecycle);}Handled::Yes}
             ScreenEvent::Tick(t) => {
-                self.idle_ms = self.idle_ms.saturating_add(t.dt_us / 1000);
+                // A parked frame's elapsed time is not inactivity after returning Home.
+                self.idle_ms = self.idle_ms.saturating_add((t.dt_us / 1000).min(250));
                 let old = self.alpha.pos;
                 self.alpha.step(if self.idle_ms < IDLE_MS {1.0}else{0.0},plx_ui::consts::K_SCALE,t.dt());
                 self.pop.step(cx.focus.current.filter(|k|k.entry==self.entry).map(|k|k.elem as usize),t.dt());
@@ -166,5 +167,27 @@ mod scene_guard_tests {
             assert_eq!(scene_point(count,plx_ui::consts::SCR_W/2.0,plx_ui::consts::SCR_H/2.0),Some([0.5,0.5]));
         }
         assert!(scene_point(4,f32::NAN,0.0).is_none());assert!(scene_point(4,-1.0,0.0).is_none());
+    }
+}
+
+#[cfg(test)]
+mod resume_tests {
+    use super::*;
+    use crate::family::InnerHost;
+    use plx_machine::machine::{Tick,FocusRead,PressRead,InputOwner,MachineId};
+    #[test]
+    fn family_resume_shows_the_dock_before_video_and_ignores_the_parked_frame_gap(){
+        let mut screen=FamilyHomeScreen::new(EntryId(1),Vec::new());
+        screen.idle_ms=IDLE_MS+1000;screen.alpha=Spring::at(0.0);
+        let measure=plx_ui::fixture::FixtureMeasure;
+        let cx=Cx::<InnerHost>{views:plx_data::stores::browse::DirectoryView::empty_for_test(),tick:Tick::default(),measure:&measure,press:PressRead::default(),focus:FocusRead::default(),owner:InputOwner::Entry(EntryId(1))};
+        let mut effects=Vec::new();let mut present=plx_machine::present::Present::default();
+        let mut fx=Effects::new(&mut effects,MachineId::Input,&mut present);
+        screen.step(&ScreenEvent::Resume,&cx,&mut fx);
+        assert_eq!(screen.idle_ms,0,"returning from Cinema must reset launcher idle");
+        assert_eq!(screen.alpha.pos,1.0,"the dock must appear before video buffering finishes");
+        screen.step(&ScreenEvent::Tick(Tick{ms:60000,dt_us:60000000}),&cx,&mut fx);
+        assert!(screen.idle_ms<IDLE_MS,"a parked minute cannot immediately hide the resumed dock");
+        assert_eq!(screen.alpha.pos,1.0);
     }
 }
