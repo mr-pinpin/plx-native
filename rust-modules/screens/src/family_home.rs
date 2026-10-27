@@ -19,7 +19,6 @@ pub const SHAPE:&str="FamilyHomeV1{entry:u32,idle_ms:u32,alpha:{pos:f32,vel:f32}
 const TILE_W: f32 = 192.0;
 const TILE_H: f32 = 192.0;
 const BOTTOM_INSET: f32 = 96.0;
-const IDLE_MS: u32 = 30000;
 const GROUP: GroupId = GroupId(0);
 
 pub struct FamilyHomeScreen {
@@ -71,10 +70,9 @@ impl<H: AppLike> Machine<H> for FamilyHomeScreen {
             ScreenEvent::Tick(t) => {
                 // A parked frame's elapsed time is not inactivity after returning Home.
                 self.idle_ms = self.idle_ms.saturating_add((t.dt_us / 1000).min(250));
-                let old = self.alpha.pos;
-                self.alpha.step(if self.idle_ms < IDLE_MS {1.0}else{0.0},plx_ui::consts::K_SCALE,t.dt());
+                                self.alpha.step(1.0,plx_ui::consts::K_SCALE,t.dt());
                 self.pop.step(cx.focus.current.filter(|k|k.entry==self.entry).map(|k|k.elem as usize),t.dt());
-                if self.idle_ms < IDLE_MS || (old-self.alpha.pos).abs()>0.0001 { fx.invalidate(Provenance::Lifecycle); }
+                fx.invalidate(Provenance::Lifecycle);
                 Handled::Yes
             }
             ScreenEvent::Input(_) | ScreenEvent::FocusMoved {..} => {self.idle_ms=0;fx.invalidate(Provenance::Input);Handled::No}
@@ -178,7 +176,7 @@ mod resume_tests {
     #[test]
     fn family_resume_shows_the_dock_before_video_and_ignores_the_parked_frame_gap(){
         let mut screen=FamilyHomeScreen::new(EntryId(1),Vec::new());
-        screen.idle_ms=IDLE_MS+1000;screen.alpha=Spring::at(0.0);
+        screen.idle_ms=31000;screen.alpha=Spring::at(0.0);
         let measure=plx_ui::fixture::FixtureMeasure;
         let cx=Cx::<InnerHost>{views:plx_data::stores::browse::DirectoryView::empty_for_test(),tick:Tick::default(),measure:&measure,press:PressRead::default(),focus:FocusRead::default(),owner:InputOwner::Entry(EntryId(1))};
         let mut effects=Vec::new();let mut present=plx_machine::present::Present::default();
@@ -187,7 +185,9 @@ mod resume_tests {
         assert_eq!(screen.idle_ms,0,"returning from Cinema must reset launcher idle");
         assert_eq!(screen.alpha.pos,1.0,"the dock must appear before video buffering finishes");
         screen.step(&ScreenEvent::Tick(Tick{ms:60000,dt_us:60000000}),&cx,&mut fx);
-        assert!(screen.idle_ms<IDLE_MS,"a parked minute cannot immediately hide the resumed dock");
+        assert!(screen.idle_ms<30000,"a parked minute cannot immediately hide the resumed dock");
         assert_eq!(screen.alpha.pos,1.0);
+        for tick in 0..1200 {screen.step(&ScreenEvent::Tick(Tick{ms:60000+tick*100,dt_us:100000}),&cx,&mut fx);}
+        assert_eq!(screen.alpha.pos,1.0,"the launcher menu must remain visible at all times");
     }
 }
