@@ -1755,6 +1755,12 @@ fn link_session_stands(app: &App) -> bool {
 /// A foreground Load launched — straight from the DID edge, or from the frame that landed a flight
 /// the restore was waiting on (`poll_foreground_flight`): mount the player and pin its transport.
 fn finish_foreground_launch(app: &mut App) {
+    // A wallpaper owns its existing launcher page. Resuming the hardware decoder
+    // must never turn that page into the movie player's transport screen.
+    if app.family_home.is_some()||plx_media::route::is_background(&app.player.session){
+        if let Some(home)=app.family_home.as_mut(){home.relaunch();}
+        return;
+    }
     // The park kept the page, so this is ordinarily a no-op; it is written out
     // because a foreground that finds the player gone has to put it back rather
     // than resume a session with nothing on screen.
@@ -3690,6 +3696,19 @@ mod lifecycle_regression_tests {
         unsafe {
             ingest_sdl_event(app, fr);
         }
+    }
+
+    #[test]
+    fn wallpaper_foreground_restore_keeps_launcher_instead_of_movie_controls(){
+        let _serial=plx_base::testlock::serial();
+        let mut app=app();
+        app.family_home=Some(super::super::family_home::Runtime::new(super::super::family_home::Config::empty()));
+        super::super::bridge::show_page(&mut app.pages,AppArg::FamilyHome{apps:Vec::new()});
+        for tick in 0..24 {frame(&mut app,tick*16);}
+        finish_foreground_launch(&mut app);
+        for tick in 24..48 {frame(&mut app,tick*16);}
+        assert!(matches!(app.route(),AppArg::FamilyHome{..}),"wallpaper resume must preserve the launcher");
+        assert!(super::super::bridge::player(&app.pages).is_none(),"wallpaper must never mount playback controls");
     }
 
     /// Crash-report consent for the test's duration, so `window::record` reaches its test capture;
