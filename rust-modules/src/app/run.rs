@@ -3674,6 +3674,7 @@ mod lifecycle_regression_tests {
             pages: plx_ui::dispatch::Dispatcher::new(),
             inputs: Default::default(),
             bridge: super::super::bridge::Bridge::for_test(|| 0),
+            family_home: None,
         };
         plx_media::route::reset_player_control_for_test(&app.player.session);
         app
