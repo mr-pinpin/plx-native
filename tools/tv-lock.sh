@@ -404,14 +404,11 @@ cmd_renew() {
 # question the lock cannot: a lease says no other LOCKED job is on the set, and this says whether
 # anybody is on it anyway — an older job, a colleague, a human with the remote.
 preflight_note() {
-  local sd dd out
-  sd="$(make -s -C "$REPO" FLAVOR=stable print-appdir 2>/dev/null)"
-  dd="$(make -s -C "$REPO" FLAVOR=debug  print-appdir 2>/dev/null)"
-  [ -n "$sd" ] && [ -n "$dd" ] || return 0
-  # ONE round trip for both installs and the ssh count. `fuser` on each install's own binary,
-  # never `pidof plxnative`: both binaries carry that name, so a name-scoped test matches BOTH and
-  # answers in an order busybox does not promise.
-  out="$(ssh_tv "for d in '$sd' '$dd'; do printf '%s ' \"\$(fuser \$d/plxnative 2>/dev/null || echo NONE)\"; done; echo; netstat -an 2>/dev/null | grep -c 'ESTABLISHED.*:22 \|:22 .*ESTABLISHED'")"
+  local out
+  if ! out="$(python3 "$REPO/tools/tv-lock-note.py" "$REPO" "$HOST")"; then
+    warn "preflight occupancy notes unavailable within the 5-second budget; lease ownership is unchanged"
+    return 0
+  fi
   local apps ssh_n
   apps="$(printf '%s\n' "$out" | head -1)"
   ssh_n="$(printf '%s\n' "$out" | sed -n '2p')"
@@ -550,21 +547,37 @@ cmd_with() {
     [ "$(fld token "$OWNER_BLK")" = "$TOKEN" ] && inherited=1
   fi
 
+  # Install cleanup BEFORE acquisition: acquire owns the lease while its advisory notes run.
+  # An interrupted caller must not leave that newly written lease orphaned in this window.
+  local acquire_pid=0 renewer=0
+  trap 'rc=$?; trap - EXIT INT TERM HUP; if [ "$acquire_pid" -gt 0 ]; then kill "$acquire_pid" 2>/dev/null || true; wait "$acquire_pid" 2>/dev/null || true; fi; if [ "$renewer" -gt 0 ]; then kill "$renewer" 2>/dev/null || true; wait "$renewer" 2>/dev/null || true; fi; [ "$inherited" = 0 ] && "$0" release >/dev/null; exit "$rc"' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  trap 'exit 129' HUP
   if [ "$inherited" = 0 ]; then
-    ( exec "$0" acquire ${WHY:+--why "$WHY"} ${LABEL:+--as "$LABEL"} \
-        ${TTL_OVERRIDE:+--ttl "$TTL_OVERRIDE"} --wait "$WAIT" ) || exit 1
+    "$0" acquire ${WHY:+--why "$WHY"} ${LABEL:+--as "$LABEL"} \
+        ${TTL_OVERRIDE:+--ttl "$TTL_OVERRIDE"} --wait "$WAIT" & acquire_pid=$!
+    if ! wait "$acquire_pid"; then acquire_pid=0; exit 1; fi
+    acquire_pid=0
     lease_load || exit 1
   fi
 
-  # Keep the lease warm for as long as the child runs. Without this a legitimately long job — the
-  # 21-case suite, a soak — expires under itself and the next lane steals the television mid-run.
-  local renewer=0
+  # Renewal belongs to the protected command, not to the bounded advisory phase.
   if [ "$inherited" = 0 ]; then
-    ( while sleep 240; do "$0" renew >/dev/null 2>&1 || exit 0; done ) & renewer=$!
+    (
+      trap - EXIT INT TERM HUP
+      local sleeper=0
+      trap '[ "$sleeper" -gt 0 ] && kill "$sleeper" 2>/dev/null; wait "$sleeper" 2>/dev/null; exit 0' INT TERM HUP
+      while :; do
+        sleep 240 & sleeper=$!
+        wait "$sleeper" || exit 0
+        "$0" renew >/dev/null 2>&1 || exit 0
+      done
+    ) >/dev/null 2>&1 & renewer=$!
   fi
-  trap 'rc=$?; [ '"$renewer"' -gt 0 ] && kill '"$renewer"' 2>/dev/null; [ '"$inherited"' = 0 ] && "$0" release >/dev/null; exit $rc' EXIT INT TERM HUP
 
   PLX_TV_LOCK_TOKEN="$TOKEN" PLX_TV_LOCK_INHERITED=1 "$@"
+  exit $?  # Run EXIT cleanup while cmd_with's owner-scoped locals still exist.
 }
 
 cmd_selftest() {
