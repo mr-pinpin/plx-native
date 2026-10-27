@@ -134,9 +134,11 @@ impl LocalFile {
         }
         if trusted_receipt(root, &file, spec) {
             if cancelled() { return Err(abort()); }
+            crate::player::log("local cache: verified installation receipt reused");
             // The same read-only opened inode is handed to AVIO, at its original offset zero.
             return Ok(Self { file, size: spec.bytes });
         }
+        crate::player::log("local cache: installation receipt unavailable; hashing local media");
         let mut digest = plx_base::sha256::Sha256::new();
         let mut count = 0u64;
         let mut chunk = [0; 65536];
