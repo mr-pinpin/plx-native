@@ -42,6 +42,7 @@ pub(crate) struct Controller {
 }
 impl Controller {
     pub fn new(config:Config)->Self{Self{desired:Some(config.scene.clone()),config,active:None,pending:None,stops:Vec::new(),foreground:false,next:super::clock::now()}}
+    pub fn immersive(&self)->bool{self.active.as_ref().is_some_and(|grant|grant.scene!=self.config.scene)}
     pub fn select(&mut self,scene:&str){if scene_id(scene){self.desired=Some(scene.into());self.next=super::clock::now();}}
     pub fn home(&mut self)->bool{
         if self.desired.as_deref().is_some_and(|scene|scene!=self.config.scene){let scene=self.config.scene.clone();self.select(&scene);true}else{false}
@@ -138,6 +139,14 @@ mod tests {
         let mut controller=controller();controller.failed();assert_eq!(controller.next,2999);
         super::super::clock::set_replay(3000);controller.select("atlas");assert_eq!(controller.next,3000);
         super::super::clock::set_replay(0);
+    }
+    #[test]
+    fn immersive_follows_accepted_active_scene_not_pending_choice(){
+        let mut c=controller();c.select("atlas");assert!(!c.immersive());
+        assert!(matches!(c.accept(Reply::Start(Some(grant("atlas"))),true),Some(Change::Ready(_))));assert!(c.immersive());
+        c.home();assert!(c.immersive(),"pending default is not yet displayed");
+        let _=c.accept(Reply::Start(Some(grant("forest"))),true);assert!(!c.immersive());
+        c.active=Some(grant("atlas"));c.failed();assert!(!c.immersive());
     }
     #[test]
     fn scene_change_during_heartbeat_survives_old_failure_and_can_return_home(){

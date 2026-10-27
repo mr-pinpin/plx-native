@@ -781,7 +781,7 @@ unsafe fn family_scene_input(app:&mut App,et:u32)->bool{
     if !home.controls_enabled(){return false;}
     if !family||matches!(et,0x103|0x104|SDL_QUIT){home.release_controls();return false;}
     if matches!(et,SDL_MOUSEMOTION|SDL_MOUSEBUTTONDOWN){
-        let (x,y)=ptr_xy(&app.ev);let on_control=app.pages.input.hit.top_at(x,y).is_some();
+        let (x,y)=ptr_xy(&app.ev);let on_control=!home.immersive()&&app.pages.input.hit.top_at(x,y).is_some();
         if (et==SDL_MOUSEMOTION&&app.ptr.dpad_mode)
             ||(et==SDL_MOUSEBUTTONDOWN&&super::input::click_is_ok(app.ptr.dpad_mode,app.ptr.mot_accum,on_control,super::boot::cursor_is_transparent())){
             home.release_controls();return false;
@@ -1848,6 +1848,13 @@ pub(crate) unsafe fn playback_tick(app: &mut App, fr: &mut Frame) {
         }
         let family_foreground=playback_may_run(app);
         if let Some(home)=app.family_home.as_mut() { home.tick(&mut app.player.session,&mut app.adapters.player,fr.now,family_foreground); }
+        if let Some(immersive)=app.family_home.as_mut().and_then(|home|home.take_presentation()){
+            if let Some(instance)=app.pages.nav.top_page().and_then(|page|app.pages.nav.instance_of(page.id)){
+                app.pages.emit(plx_machine::machine::MachineId::Nav,plx_machine::machine::Fx::Deliver(
+                    plx_machine::machine::MachineId::Instance(instance),plx_machine::machine::Delivery::Screen(
+                        plx_ui::screen::ScreenEvent::App(plx_screens::registry::AppMsg::FamilyImmersive(immersive)))));
+            }
+        }
         if app.family_home.as_mut().is_some_and(|home|home.take_wake()){
             if let Some(instance)=app.pages.nav.top_page().and_then(|page|app.pages.nav.instance_of(page.id)) {
                 app.pages.emit(plx_machine::machine::MachineId::Nav,plx_machine::machine::Fx::Deliver(

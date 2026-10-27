@@ -7,7 +7,7 @@ pub(crate) struct Config {version:u32,#[serde(default,rename="pointerDirectionVi
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ApplicationConfig{id:String,title:String,#[serde(default)] icon:Option<String>,#[serde(default)] scene:Option<String>,#[serde(skip)] pixels:Option<plx_ui::owned_image::Pixels>}
-pub(crate) struct Runtime {config:Config,direction:super::family_direction::Direction,shuttle:super::family_shuttle::Shuttle,trace_input_at:Option<u32>,trace_action_at:Option<u32>,trace_state_at:Option<u32>,retry_at:u32,status_at:u32,snapshot_at:u32,snapshot:Option<Snapshot>,snapshot_requested:u32,worker:Option<std::sync::mpsc::Receiver<(u32,Option<Snapshot>)>>,input:Option<super::family_input::Bridge>,scene_click:bool,scene:Option<super::family_scene::Controller>,managed:Option<Source>,foreground:bool,wake:bool}
+pub(crate) struct Runtime {config:Config,direction:super::family_direction::Direction,shuttle:super::family_shuttle::Shuttle,trace_input_at:Option<u32>,trace_action_at:Option<u32>,trace_state_at:Option<u32>,retry_at:u32,status_at:u32,snapshot_at:u32,snapshot:Option<Snapshot>,snapshot_requested:u32,worker:Option<std::sync::mpsc::Receiver<(u32,Option<Snapshot>)>>,input:Option<super::family_input::Bridge>,scene_click:bool,scene:Option<super::family_scene::Controller>,managed:Option<Source>,foreground:bool,wake:bool,presentation_sent:Option<bool>}
 impl Config {
     pub fn load()->Result<Self,String>{
         use std::io::Read;
@@ -30,8 +30,10 @@ impl Config {
 impl Runtime {
     pub fn warm_background_trial(&self)->bool{self.config.warm_background_trial}
 
+    pub fn immersive(&self)->bool{self.scene.as_ref().is_some_and(super::family_scene::Controller::immersive)}
+    pub fn take_presentation(&mut self)->Option<bool>{let immersive=self.immersive();if self.presentation_sent==Some(immersive){None}else{self.presentation_sent=Some(immersive);Some(immersive)}}
     pub fn application(&self,index:u8)->Option<&str>{self.config.apps.get(index as usize).map(|app|app.id.as_str())}
-    pub fn new(mut config:Config)->Self{let scene=config.rendering.take().map(super::family_scene::Controller::new);let input=if config.pointer_shuttle||config.pointer_direction_video{None}else{config.controls.as_ref().and_then(super::family_input::Bridge::start)};Self{config,direction:Default::default(),shuttle:Default::default(),trace_input_at:None,trace_action_at:None,trace_state_at:None,retry_at:0,status_at:0,snapshot_at:0,snapshot:None,snapshot_requested:0,worker:None,input,scene_click:false,scene,managed:None,foreground:false,wake:false}}
+    pub fn new(mut config:Config)->Self{let scene=config.rendering.take().map(super::family_scene::Controller::new);let input=if config.pointer_shuttle||config.pointer_direction_video{None}else{config.controls.as_ref().and_then(super::family_input::Bridge::start)};Self{config,direction:Default::default(),shuttle:Default::default(),trace_input_at:None,trace_action_at:None,trace_state_at:None,retry_at:0,status_at:0,snapshot_at:0,snapshot:None,snapshot_requested:0,worker:None,input,scene_click:false,scene,managed:None,foreground:false,wake:false,presentation_sent:None}}
     pub fn launch_scene(&mut self,index:u8)->bool{
         let Some(scene)=self.config.apps.get(index as usize).and_then(|app|app.scene.as_deref())else{return false;};
         if let Some(controller)=&mut self.scene{controller.select(scene);true}else{false}
@@ -47,7 +49,7 @@ impl Runtime {
     pub fn trace_pointer(&mut self,event:u32,raw:[i32;2],logical:[f32;2],on_control:bool,eligible:bool,bound:bool,dpad:bool){
         let now=super::clock::now();
         if !self.config.pointer_diagnostics||!trace_due(&mut self.trace_input_at,now,250){return;}
-        let point=plx_screens::family_home::scene_point(self.config.apps.len(),logical[0],logical[1]);
+        let point=plx_screens::family_home::scene_point(if self.immersive(){0}else{self.config.apps.len()},logical[0],logical[1]);
         plx_base::eventlog::log(&format!("family shuttle ingress event={event} raw={},{} logical={:.2},{:.2} norm={point:?} onDock={} eligible={eligible} bound={bound} dpad={dpad} managed={}",raw[0],raw[1],logical[0],logical[1],on_control||point.is_none(),self.managed.is_some()));
     }
     fn trace_action(&mut self,now:u32,action:&super::family_shuttle::Action,ready:bool,position:i64,duration:i64,accepted:Option<bool>){
@@ -57,7 +59,7 @@ impl Runtime {
         plx_base::eventlog::log(&format!("family shuttle action={action:?} ready={ready} pos={position} duration={duration} desired={:?} pointer={:?} holding={} accepted={accepted:?} paused={} pending={} preroll={}",self.shuttle.desired(),self.shuttle.point(now),self.shuttle.holding(),plx_media::player::lifecycle::paused(),plx_media::player::seek_pending(),plx_media::player::seek_preroll_active()));
     }
     pub fn control_pointer(&mut self,x:f32,y:f32,on_control:bool){
-        let point=if on_control{None}else{plx_screens::family_home::scene_point(self.config.apps.len(),x,y)};
+        let point=if on_control&&!self.immersive(){None}else{plx_screens::family_home::scene_point(if self.immersive(){0}else{self.config.apps.len()},x,y)};
         if self.direction_enabled(){self.direction.pointer(point,super::clock::now());if let Some(input)=&self.input{input.release();}return;}
         if self.shuttle_enabled(){self.shuttle.pointer_motion(point,super::clock::now());if let Some(input)=&self.input{input.release();}return;}
         self.shuttle.release();if let Some(input)=&self.input{input.pointer(point);}

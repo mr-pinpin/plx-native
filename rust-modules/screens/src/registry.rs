@@ -1330,6 +1330,7 @@ pub enum DetailRefreshPhase {
 pub enum AppMsg {
     FamilyStatus(crate::family_home::Status),
     FamilyWake,
+    FamilyImmersive(bool),
     Session(plx_session::auth::owner::SessionEvent),
     Consent(ConsentCmd),
     RestartReply { correlation: u32, accepted: bool },

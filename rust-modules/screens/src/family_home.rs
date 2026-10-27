@@ -14,7 +14,7 @@ pub struct Application { pub id: String, pub title: String, pub icon: Option<plx
 #[derive(Clone,PartialEq,Eq,Default)]
 pub struct Status {pub clock:String,pub date:String,pub network:String}
 
-pub const SHAPE:&str="FamilyHomeV1{entry:u32,idle_ms:u32,alpha:{pos:f32,vel:f32},pop:CtlPop<5>,status:{clock:str,date:str,network:str},apps:seq<{id:str,title:str}>}";
+pub const SHAPE:&str="FamilyHomeV2{entry:u32,immersive:bool,idle_ms:u32,alpha:{pos:f32,vel:f32},pop:CtlPop<5>,status:{clock:str,date:str,network:str},apps:seq<{id:str,title:str}>}";
 
 const TILE_W: f32 = 192.0;
 const TILE_H: f32 = 192.0;
@@ -25,6 +25,7 @@ const GROUP: GroupId = GroupId(0);
 
 pub struct FamilyHomeScreen {
     entry: EntryId,
+    immersive: bool,
     apps: Vec<Application>,
     idle_ms: u32,
     status: Status,
@@ -35,7 +36,7 @@ pub struct FamilyHomeScreen {
 impl FamilyHomeScreen {
     pub fn new(entry: EntryId, apps: Vec<Application>) -> Self {
         let icons=(0..apps.len()).map(|_|Default::default()).collect();
-        Self { entry, apps, icons, status:Status::default(), idle_ms: 0, alpha: Spring::at(1.0), pop: CtlPop::new() }
+        Self { entry, immersive:false, apps, icons, status:Status::default(), idle_ms: 0, alpha: Spring::at(1.0), pop: CtlPop::new() }
     }
     fn rect(&self, index: usize) -> Option<Rect> { dock_rect(self.apps.len(),index) }
 }
@@ -48,6 +49,7 @@ fn dock_rect(count:usize,index:usize)->Option<Rect>{
 impl FamilyHomeScreen {
     fn key(&self, i: usize) -> FocusKey<u32> { FocusKey { entry: self.entry, elem: i as u32 } }
     fn activate<H: AppLike>(&self, elem: u32, fx: &mut Effects<'_, H>) -> Handled {
+        if self.immersive{return Handled::No;}
         let Some(_app) = self.apps.get(elem as usize) else { return Handled::No };
         fx.push(Fx::App(AppFx::Loop(LoopReq::FamilyLaunch(elem as u8))));
         Handled::Yes
@@ -55,7 +57,7 @@ impl FamilyHomeScreen {
 }
 impl LogicalState for FamilyHomeScreen {
     fn write(&self, c: &mut Canon) {
-        c.u32(self.entry.0).u32(self.idle_ms).f32(self.alpha.pos).f32(self.alpha.vel);
+        c.u32(self.entry.0).bool(self.immersive).u32(self.idle_ms).f32(self.alpha.pos).f32(self.alpha.vel);
         self.pop.write_motion(c);
         c.str(&self.status.clock).str(&self.status.date).str(&self.status.network);
         c.seq(self.apps.len());
@@ -67,6 +69,7 @@ impl<H: AppLike> Machine<H> for FamilyHomeScreen {
     type Ev = ScreenEvent<H>;
     fn step(&mut self, ev: &Self::Ev, cx: &Cx<'_,H>, fx: &mut Effects<'_,H>) -> Handled {
         match ev {
+            ScreenEvent::App(crate::registry::AppMsg::FamilyImmersive(immersive))=>{if self.immersive!=*immersive{self.immersive=*immersive;fx.invalidate(Provenance::Lifecycle);}Handled::Yes}
             ScreenEvent::Resume | ScreenEvent::App(crate::registry::AppMsg::FamilyWake)=>{self.idle_ms=0;self.alpha=Spring::at(1.0);fx.invalidate(Provenance::Lifecycle);Handled::Yes}
             ScreenEvent::App(crate::registry::AppMsg::FamilyStatus(status))=>{if self.status!=*status{self.status=status.clone();fx.invalidate(Provenance::Lifecycle);}Handled::Yes}
             ScreenEvent::Tick(t) => {
@@ -87,16 +90,18 @@ impl<H: AppLike> Machine<H> for FamilyHomeScreen {
 }
 impl<H: AppLike> Focusable<H> for FamilyHomeScreen {
     fn groups(&self,_:&Cx<'_,H>,out:&mut Vec<GroupSpec>) {
+        if self.immersive{return;}
         out.push(GroupSpec{id:GROUP,kind:GroupKind::Row{wrap:false},seat:Seat::First,reachable:AxisMask::BOTH,
             edge:[EdgeRule::Stop;4],extent:Rect::FULL,len:self.apps.len(),elem:ElemKind::Control});
     }
-    fn group_of(&self,elem:&u32,_:&Cx<'_,H>)->Option<GroupId>{((*elem as usize)<self.apps.len()).then_some(GROUP)}
+    fn group_of(&self,elem:&u32,_:&Cx<'_,H>)->Option<GroupId>{(!self.immersive&&(*elem as usize)<self.apps.len()).then_some(GROUP)}
     fn neighbour(&self,key:FocusKey<u32>,dir:Dir,_:&Cx<'_,H>)->Step<u32>{
+        if self.immersive{return Step::Edge;}
         let index=match dir{Dir::Left=>key.elem.checked_sub(1),Dir::Right=>key.elem.checked_add(1),_=>None};
         index.filter(|i|(*i as usize)<self.apps.len()).map_or(Step::Edge,|i|Step::Move(self.key(i as usize)))
     }
     fn place(&self,elem:&u32,_:&Cx<'_,H>,_:At)->Option<Placed>{
-        if (*elem as usize)>=self.apps.len(){return None;}
+        if self.immersive||(*elem as usize)>=self.apps.len(){return None;}
         let rect=self.rect(*elem as usize)?;Some(Placed{rect,rest_rect:rect,clip:Rect::FULL,index:Some(*elem)})
     }
     fn reconcile(&self,key:FocusKey<u32>,_:&Cx<'_,H>)->FocusKey<u32>{self.key((key.elem as usize).min(self.apps.len().saturating_sub(1)))}
@@ -107,9 +112,11 @@ impl<H:AppLike> Screen<H> for FamilyHomeScreen {
     fn state(&self)->&dyn LogicalState{self}
     fn crumb(&self,_:&Cx<'_,H>)->Option<std::borrow::Cow<'_,str>>{None}
     fn prepare(&mut self,budget:&mut plx_ui::frame::Budget,_:&Cx<'_,H>){
+        if self.immersive{return;}
         for (app,icon) in self.apps.iter().zip(&mut self.icons){if let Some(pixels)=&app.icon{icon.prepare(pixels,budget);}}
     }
     fn draw(&mut self,f:&mut DrawFrame<'_,'_,H>){
+        if self.immersive{return;}
         let p=f.painter.alpha(f.page_alpha*self.alpha.pos.clamp(0.0,1.0));
         if let (Ok(clock),Ok(date))=(CString::new(self.status.clock.as_str()),CString::new(self.status.date.as_str())){
             let text=plx_ui::label::Label::new(clock.as_ptr(),theme::size::BODY,theme::TEXT_PRIMARY);
@@ -198,6 +205,27 @@ mod dock_presentation_tests {
     use super::*;
     use crate::registry::TestAppHost as InnerHost;
     use plx_machine::machine::{Tick,FocusRead,PressRead,InputOwner};
+    #[test]
+    fn immersive_scene_has_no_native_overlay_focus_or_click_stops_and_restores_dock(){
+        let _serial=plx_base::testlock::serial();
+        let apps=(0..3).map(|i|Application{id:format!("com.example.app{i}"),title:"App".into(),icon:None}).collect();
+        let mut screen=FamilyHomeScreen::new(EntryId(1),apps);
+        screen.status=Status{clock:"12:30".into(),date:"27/10".into(),network:"Wi-Fi".into()};
+        let measure=plx_ui::fixture::FixtureMeasure;
+        let cx=Cx::<InnerHost>{views:plx_data::stores::browse::DirectoryView::empty_for_test(),tick:Tick::default(),measure:&measure,press:PressRead::default(),focus:FocusRead::default(),owner:InputOwner::Entry(EntryId(1))};
+        let mut effects=Vec::new();let mut present=plx_machine::present::Present::default();
+        let mut fx=Effects::new(&mut effects,plx_machine::machine::MachineId::Input,&mut present);
+        screen.step(&ScreenEvent::App(crate::registry::AppMsg::FamilyImmersive(true)),&cx,&mut fx);
+        let mut frame=DrawFrame::new(&cx,plx_ui::Painter::recording());
+        let text=plx_ui::draw_census::capture_text(||plx_ui::screen::record_stops_while_recording(||Screen::<InnerHost>::draw(&mut screen,&mut frame)));
+        assert!(text.is_empty());assert!(frame.stops().is_empty());
+        let mut groups=Vec::new();screen.groups(&cx,&mut groups);assert!(groups.is_empty());
+        assert!(screen.place(&0,&cx,At::Drawn).is_none());
+        screen.step(&ScreenEvent::App(crate::registry::AppMsg::FamilyImmersive(false)),&cx,&mut fx);
+        let mut frame=DrawFrame::new(&cx,plx_ui::Painter::recording());
+        plx_ui::screen::record_stops_while_recording(||Screen::<InnerHost>::draw(&mut screen,&mut frame));
+        assert_eq!(frame.stops().len(),3);screen.groups(&cx,&mut groups);assert_eq!(groups.len(),1);
+    }
     #[test]
     fn three_icon_dock_has_no_app_labels_and_keeps_three_centered_click_targets(){
         let _serial=plx_base::testlock::serial();
