@@ -118,3 +118,16 @@ process disappears before cleanup can run. No scene supplies commands or URLs.
 A host test establishes controller ordering, not native receipt of a live scene.
 Verify the actual TV's decoded frames and returned pointer controls before
 claiming an interactive scene has been delivered.
+
+## Immersive managed scenes
+
+An accepted active managed scene whose ID differs from the configured default
+scene hides the native Family dock and top band. This is typed presentation state
+included in the screen's canonical state and schema. A merely requested or pending
+scene does not hide anything. Immersive mode emits no launcher draw calls, focus
+groups, placements, activation effects or click stops; the scene receives normalized
+coordinates across the whole viewport, including the former dock area. The original
+producer page supplies its own UI. Actual default-scene acceptance or failure restores
+the native launcher. Root Back retains the existing return-to-default behavior.
+This does not add a new Home key hook: SAM may treat Home as a no-op while Family
+is already foreground. Ordinary forest presentation keeps the configured dock.
