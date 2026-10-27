@@ -3,11 +3,11 @@ use plx_media::player::background::Source;
 use plx_screens::family_home::Application;
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct Config {version:u32,#[serde(default,rename="pointerShuttle")]pointer_shuttle:bool,pub background:Option<Source>,apps:Vec<ApplicationConfig>,#[serde(default)] controls:Option<super::family_input::Config>,#[serde(default)] rendering:Option<super::family_scene::Config>,#[serde(default)] cover:Option<String>,#[serde(skip)] cover_pixels:Option<plx_ui::owned_image::Pixels>}
+pub(crate) struct Config {version:u32,#[serde(default,rename="pointerShuttle")]pointer_shuttle:bool,#[serde(default,rename="pointerDiagnostics")]pointer_diagnostics:bool,pub background:Option<Source>,apps:Vec<ApplicationConfig>,#[serde(default)] controls:Option<super::family_input::Config>,#[serde(default)] rendering:Option<super::family_scene::Config>,#[serde(default)] cover:Option<String>,#[serde(skip)] cover_pixels:Option<plx_ui::owned_image::Pixels>}
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ApplicationConfig{id:String,title:String,#[serde(default)] icon:Option<String>,#[serde(default)] scene:Option<String>,#[serde(skip)] pixels:Option<plx_ui::owned_image::Pixels>}
-pub(crate) struct Runtime {config:Config,shuttle:super::family_shuttle::Shuttle,cover_image:plx_ui::owned_image::OwnedImage,retry_at:u32,status_at:u32,snapshot_at:u32,snapshot:Option<Snapshot>,worker:Option<std::sync::mpsc::Receiver<Option<Snapshot>>>,input:Option<super::family_input::Bridge>,scene_click:bool,scene:Option<super::family_scene::Controller>,managed:Option<Source>,foreground:bool,wake:bool}
+pub(crate) struct Runtime {config:Config,shuttle:super::family_shuttle::Shuttle,trace_input_at:Option<u32>,trace_action_at:Option<u32>,trace_state_at:Option<u32>,cover_image:plx_ui::owned_image::OwnedImage,retry_at:u32,status_at:u32,snapshot_at:u32,snapshot:Option<Snapshot>,worker:Option<std::sync::mpsc::Receiver<Option<Snapshot>>>,input:Option<super::family_input::Bridge>,scene_click:bool,scene:Option<super::family_scene::Controller>,managed:Option<Source>,foreground:bool,wake:bool}
 impl Config {
     pub fn load()->Result<Self,String>{
         use std::io::Read;
@@ -26,11 +26,11 @@ impl Config {
         Ok(config)
     }
     pub fn applications(&self)->Vec<Application>{self.apps.iter().map(|app|Application{id:app.id.clone(),title:app.title.clone(),icon:app.pixels.clone()}).collect()}
-    pub fn empty()->Self{Self{version:1,pointer_shuttle:false,background:None,apps:Vec::new(),controls:None,rendering:None,cover:None,cover_pixels:None}}
+    pub fn empty()->Self{Self{version:1,pointer_shuttle:false,pointer_diagnostics:false,background:None,apps:Vec::new(),controls:None,rendering:None,cover:None,cover_pixels:None}}
 }
 impl Runtime {
     pub fn application(&self,index:u8)->Option<&str>{self.config.apps.get(index as usize).map(|app|app.id.as_str())}
-    pub fn new(mut config:Config)->Self{let scene=config.rendering.take().map(super::family_scene::Controller::new);let input=if config.pointer_shuttle{None}else{config.controls.as_ref().and_then(super::family_input::Bridge::start)};Self{config,shuttle:Default::default(),cover_image:Default::default(),retry_at:0,status_at:0,snapshot_at:0,snapshot:None,worker:None,input,scene_click:false,scene,managed:None,foreground:false,wake:false}}
+    pub fn new(mut config:Config)->Self{let scene=config.rendering.take().map(super::family_scene::Controller::new);let input=if config.pointer_shuttle{None}else{config.controls.as_ref().and_then(super::family_input::Bridge::start)};Self{config,shuttle:Default::default(),trace_input_at:None,trace_action_at:None,trace_state_at:None,cover_image:Default::default(),retry_at:0,status_at:0,snapshot_at:0,snapshot:None,worker:None,input,scene_click:false,scene,managed:None,foreground:false,wake:false}}
     /// Local render resource: prepared once, before the first launcher draw. It stays resident
     /// across application switches and covers a failed or offline stream indefinitely.
     pub fn prepare_cover(&mut self,budget:&mut plx_ui::frame::Budget){
@@ -50,6 +50,19 @@ impl Runtime {
     pub fn release_controls(&mut self){self.shuttle.release();self.scene_click=false;if let Some(input)=&self.input{input.release();}}
     fn shuttle_enabled(&self)->bool{self.config.pointer_shuttle&&self.managed.is_none()}
     pub fn controls_enabled(&self)->bool{self.input.is_some()||self.shuttle_enabled()}
+    pub fn diagnostics_enabled(&self)->bool{self.config.pointer_diagnostics}
+    pub fn trace_pointer(&mut self,event:u32,raw:[i32;2],logical:[f32;2],on_control:bool,eligible:bool,bound:bool,dpad:bool){
+        let now=super::clock::now();
+        if !self.config.pointer_diagnostics||!trace_due(&mut self.trace_input_at,now,250){return;}
+        let point=plx_screens::family_home::scene_point(self.config.apps.len(),logical[0],logical[1]);
+        plx_base::eventlog::log(&format!("family shuttle ingress event={event} raw={},{} logical={:.2},{:.2} norm={point:?} onDock={} eligible={eligible} bound={bound} dpad={dpad} managed={}",raw[0],raw[1],logical[0],logical[1],on_control||point.is_none(),self.managed.is_some()));
+    }
+    fn trace_action(&mut self,now:u32,action:&super::family_shuttle::Action,ready:bool,position:i64,duration:i64,accepted:Option<bool>){
+        if !self.config.pointer_diagnostics{return;}
+        let due=if matches!(action,super::family_shuttle::Action::None){trace_due(&mut self.trace_state_at,now,250)}else{trace_due(&mut self.trace_action_at,now,125)};
+        if !due{return;}
+        plx_base::eventlog::log(&format!("family shuttle action={action:?} ready={ready} pos={position} duration={duration} desired={:?} pointer={:?} holding={} accepted={accepted:?} paused={} pending={} preroll={}",self.shuttle.desired(),self.shuttle.point(now),self.shuttle.holding(),plx_media::player::lifecycle::paused(),plx_media::player::seek_pending(),plx_media::player::seek_preroll_active()));
+    }
     pub fn control_pointer(&mut self,x:f32,y:f32,on_control:bool){
         let point=if on_control{None}else{plx_screens::family_home::scene_point(self.config.apps.len(),x,y)};
         if self.shuttle_enabled(){self.shuttle.pointer(point.map(|point|point[0]),super::clock::now());if let Some(input)=&self.input{input.release();}return;}
@@ -101,12 +114,15 @@ impl Runtime {
         if self.controls_enabled()&&(!pa.is_live()||!plx_media::route::is_background(ps)||plx_media::player::ended()){self.release_controls();}
         if self.shuttle_enabled()&&pa.is_live()&&plx_media::route::is_background(ps){
             let ready=!plx_media::player::loading(ps)&&plx_media::player::seek_pending()<0&&!plx_media::player::seek_preroll_active()&&plx_media::player::seen_frame();
-            match self.shuttle.step(now,ready,plx_media::player::playpos_ns(),plx_media::player::duration_ns()){
-                super::family_shuttle::Action::Pause=>{let accepted=plx_media::player::pause(pa);self.shuttle.acknowledge_pause(accepted);},
-                super::family_shuttle::Action::Resume=>{let accepted=plx_media::player::resume(pa);self.shuttle.acknowledge_resume(accepted);},
-                super::family_shuttle::Action::Seek(target)=>plx_media::player::request_seek(target),
-                super::family_shuttle::Action::None=>{},
-            }
+            let position=plx_media::player::playpos_ns();let duration=plx_media::player::duration_ns();
+            let action=self.shuttle.step(now,ready,position,duration);
+            let accepted=match action{
+                super::family_shuttle::Action::Pause=>{let accepted=plx_media::player::pause(pa);self.shuttle.acknowledge_pause(accepted);Some(accepted)},
+                super::family_shuttle::Action::Resume=>{let accepted=plx_media::player::resume(pa);self.shuttle.acknowledge_resume(accepted);Some(accepted)},
+                super::family_shuttle::Action::Seek(target)=>{plx_media::player::request_seek(target);None},
+                super::family_shuttle::Action::None=>None,
+            };
+            self.trace_action(now,&action,ready,position,duration,accepted);
         }else{self.shuttle.forget();}
         let Some(source)=self.managed.as_ref().or(self.config.background.as_ref()) else{return;};
         if plx_media::player::ended()&&plx_media::route::is_background(ps)&&source.looping{
@@ -212,5 +228,21 @@ mod control_tests{
         runtime.control_pointer(100.0,100.0,false);assert!(runtime.control_click(true));
         // The old scene's button-up was lost. A new dock gesture owns both of its edges.
         runtime.control_pointer(960.0,900.0,true);assert!(!runtime.control_click(true));assert!(!runtime.control_click(false));
+    }
+}
+
+// Bounded, replay-clock sampling; no trigger-file checks occur on the frame path.
+fn trace_due(last:&mut Option<u32>,now:u32,period:u32)->bool{
+    if last.is_some_and(|last|now.wrapping_sub(last)<period){return false;}
+    *last=Some(now);true
+}
+#[cfg(test)]
+mod trace_tests{
+    use super::*;
+    #[test]
+    fn diagnostics_default_off_and_sampling_is_bounded_across_clock_wrap(){
+        assert!(!Config::empty().pointer_diagnostics);
+        let mut last=None;assert!(trace_due(&mut last,u32::MAX-50,250));
+        assert!(!trace_due(&mut last,49,250));assert!(trace_due(&mut last,199,250));
     }
 }

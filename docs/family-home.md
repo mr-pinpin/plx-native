@@ -52,6 +52,15 @@ releases steering and resumes ambient playback. A managed Mini scene keeps its
 own input authority and is never controlled by this local shuttle. Actual
 smoothness and pointer behavior still require TV verification.
 
+Private `pointerDiagnostics: true` enables sampled observations in the existing
+Family event log. Ingress is sampled before eligibility and D-pad release checks:
+raw SDL pixels, logical/normalized coordinates, dock exclusion and native plane
+ownership remain distinguishable. Action/state samples include the desired
+timeline, actual PTS, readiness, pending/preroll state and pause/resume return
+values. Input/state sampling is bounded to 250 ms and action sampling to 125 ms.
+The option is read only at bootstrap, defaults off, supplies no behavior override
+and does not log service URLs or capabilities. Disable it after device diagnosis.
+
 Configuration, service URLs and any capabilities remain private. Installing this package does not replace Cinema or book package identities, change the factory launcher, or redirect the remote's Home button. Those integrations require their own reversible deployment steps.
 
 

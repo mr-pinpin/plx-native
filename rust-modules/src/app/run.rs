@@ -775,6 +775,10 @@ unsafe fn family_scene_input(app:&mut App,et:u32)->bool{
     let family=matches!(app.route(),AppArg::FamilyHome{..})&&!app.pages.surface_up()&&app.window_activity.allow_present(true)
         &&app.player.video_plane_bound&&plx_media::route::is_background(&app.player.session);
     let Some(home)=app.family_home.as_mut()else{return false;};
+    if home.diagnostics_enabled()&&matches!(et,SDL_MOUSEMOTION|SDL_MOUSEBUTTONDOWN|SDL_MOUSEBUTTONUP){
+        let logical=ptr_xy(&app.ev);let hit=app.pages.input.hit.top_at(logical.0,logical.1).is_some();
+        home.trace_pointer(et,[rd_i32(&app.ev,20),rd_i32(&app.ev,24)],[logical.0,logical.1],hit,family,app.player.video_plane_bound,app.ptr.dpad_mode);
+    }
     if !home.controls_enabled(){return false;}
     if !family||matches!(et,0x103|0x104|SDL_QUIT){home.release_controls();return false;}
     if matches!(et,SDL_MOUSEMOTION|SDL_MOUSEBUTTONDOWN){

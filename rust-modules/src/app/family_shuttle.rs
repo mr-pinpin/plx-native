@@ -47,6 +47,15 @@ impl Shuttle {
         }
         self.pointer = next;
     }
+    pub fn desired(&self) -> Option<f64> {
+        self.target
+    }
+    pub fn point(&self, now: u32) -> Option<(f32, u32)> {
+        self.pointer.map(|(x, at)| (x, now.wrapping_sub(at)))
+    }
+    pub fn holding(&self) -> bool {
+        self.holding
+    }
     pub fn release(&mut self) {
         self.pointer = None;
     }
