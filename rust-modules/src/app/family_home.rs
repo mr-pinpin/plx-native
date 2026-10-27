@@ -118,7 +118,6 @@ impl Runtime {
             self.trace_action(now,&action,ready,position,duration,accepted);
         }else{self.shuttle.forget();}
         let Some(source)=self.managed.as_ref().or(self.config.background.as_ref()) else{return;};
-        if !pa.is_live(){self.direction=Default::default();}
         let direction_local=self.direction_enabled()&&plx_media::route::is_background(ps)&&plx_media::player::local_source();
         if direction_local&&pa.is_live(){
             let ready=!plx_media::player::loading(ps)&&plx_media::player::seek_pending()<0&&!plx_media::player::seek_preroll_active()&&plx_media::player::seen_frame();

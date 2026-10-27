@@ -7,7 +7,7 @@ use std::{
 };
 
 pub const ROOT: &str = "/media/internal/pinpin-family/cache";
-pub const MAX_BYTES: u64 = 128 * 1024 * 1024;
+pub const MAX_BYTES: u64 = 1024 * 1024 * 1024;
 const RECEIPT_MAX_BYTES: u64 = 4096;
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize)]

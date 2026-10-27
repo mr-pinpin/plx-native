@@ -2,7 +2,7 @@
 'use strict';
 // Administrative operation only. The application never creates its own trust receipts.
 const fs=require('fs'), crypto=require('crypto'), path=require('path');
-const ROOT='/media/internal/pinpin-family/cache', MAX=128*1024*1024;
+const ROOT='/media/internal/pinpin-family/cache', MAX=1024*1024*1024;
 function identity(s){return {device:String(s.dev),inode:String(s.ino),size:String(s.size),modifiedNs:String(s.mtimeNs),changedNs:String(s.ctimeNs)};}
 function protectedFile(s){return s.isFile()&&s.uid===0n&&(s.mode&0o222n)===0n;}
 function writeReceipt(root,sha256,bytes){
