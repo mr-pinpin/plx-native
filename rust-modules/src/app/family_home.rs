@@ -76,7 +76,7 @@ impl Runtime {
             self.release_controls();
             if switching&&plx_media::route::is_background(ps)&&pa.is_live(){plx_media::player::stop_bufferfeed(ps,pa);}
             match change {super::family_scene::Change::Ready(grant)=>{self.managed=Some(grant.source());self.input=grant.input().as_ref().and_then(super::family_input::Bridge::start);},super::family_scene::Change::Passive=>{self.managed=None;self.input=self.config.controls.as_ref().and_then(super::family_input::Bridge::start);}}
-            self.retry_at=now;
+            if switching{self.retry_at=now;}
         }
         if !foreground{return;}
         if self.managed.is_some()&&pa.is_live()&&plx_media::player::ended(){
