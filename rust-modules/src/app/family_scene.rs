@@ -66,6 +66,7 @@ impl Controller {
                 let now=super::clock::now();
                 match outcome {
                     Heartbeat::Healthy=>{
+                        if self.heartbeat_misses>0{plx_base::eventlog::log("family scene heartbeat: recovered");}
                         self.heartbeat_misses=0;self.heartbeat_since=None;
                         self.next=now.wrapping_add(if self.active.as_ref().is_some_and(|grant|self.desired.as_deref()==Some(grant.scene.as_str())){10000}else{0});None
                     },
@@ -73,14 +74,15 @@ impl Controller {
                         // The manager's verified TTL is 30s; normal HB is 10s. A bounded retry
                         // preserves healthy media through one lost control packet, never indefinitely.
                         self.heartbeat_misses=self.heartbeat_misses.saturating_add(1);
+                        plx_base::eventlog::log(&format!("family scene heartbeat: transient miss={}",self.heartbeat_misses));
                         let since=*self.heartbeat_since.get_or_insert(now);
                         if self.heartbeat_misses>=3||now.wrapping_sub(since)>=5000 {
-                            self.failed();Some(Change::Passive)
+                            plx_base::eventlog::log("family scene heartbeat: retry grace exhausted; yielding Home");self.failed();Some(Change::Passive)
                         }else{
                             self.next=now.wrapping_add(if self.active.as_ref().is_some_and(|grant|self.desired.as_deref()==Some(grant.scene.as_str())){1000}else{0});None
                         }
                     },
-                    Heartbeat::Fatal=>{self.failed();Some(Change::Passive)},
+                    Heartbeat::Fatal=>{plx_base::eventlog::log("family scene heartbeat: denied, gone or invalid reply; yielding Home");self.failed();Some(Change::Passive)},
                 }
             },
             Reply::Stopped=>None,
