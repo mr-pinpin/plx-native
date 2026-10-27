@@ -111,6 +111,7 @@ def appinfo_for(flavor: str, nightly_date: "str | None" = None) -> dict:
     if flavor == "family":
         # Native Home is the destination, not a Cinema startup interstitial. These documented
         # SAM presentation flags are family-only; the three Cinema descriptors stay unchanged.
+        # https://www.webosbrew.org/develop/guides/appinfo/#nosplashonlaunch-boolean
         a["noSplashOnLaunch"] = True
         a["spinnerOnLaunch"] = False
     # NIGHTLY ONLY: the package version itself moves — to the next minor (or next patch, on a
