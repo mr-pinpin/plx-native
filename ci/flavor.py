@@ -261,18 +261,29 @@ def _selftest() -> int:
     rs_stable = re.search(r"(?m)^const STABLE_PORT: u16 = (\d+);", cap)
     mk_port = re.search(
         r"(?m)^APPPORT\s*=\s*\$\(if \$\(filter stable,\$\(FLAVOR\)\),(\d+),"
-        r"\$\(if \$\(filter nightly,\$\(FLAVOR\)\),(\d+),(\d+)\)\)", mk)
+        r"\$\(if \$\(filter nightly,\$\(FLAVOR\)\),(\d+),"
+        r"\$\(if \$\(filter family,\$\(FLAVOR\)\),(\d+),(\d+)\)\)\)", mk)
     check(rs_stable is not None and mk_port is not None
           and rs_stable.group(1) == mk_port.group(1)
-          and int(mk_port.group(3)) == int(mk_port.group(1)) + 1
+          and int(mk_port.group(4)) == int(mk_port.group(1)) + 1
+          and int(mk_port.group(3)) == int(mk_port.group(1)) + 3
           and int(mk_port.group(2)) == int(mk_port.group(1)) + 2
           and 'Some("debug") => STABLE_PORT + 1,' in cap
-          and 'Some("nightly") => STABLE_PORT + 2,' in cap,
+          and 'Some("nightly") => STABLE_PORT + 2,' in cap
+          and 'Some("family") => STABLE_PORT + 3,' in cap,
           "capture port: Makefile APPPORT and capture::default_port agree "
-          "(stable, debug=+1, nightly=+2)")
-    check(len(FLAVORS) == 3,
-          "the capture-port rule now names debug and nightly explicitly — a FOURTH flavour needs "
+          "(stable, debug=+1, nightly=+2, family=+3)")
+    check(FLAVORS == ("stable", "debug", "nightly", "family"),
+          "the capture-port rule names all four installs explicitly — a new flavour needs "
           "a real decision in both capture.rs and the Makefile, the same way nightly just did")
+
+    family = appinfo_for("family")
+    check(family["id"] == f"{STABLE_ID}.family" and family["title"] == "PinPin Home",
+          "family launcher has its own install identity and title")
+    check({k for k in tracked_appinfo if family.get(k) != tracked_appinfo[k]} == {"id", "title", "iconColor"},
+          "family presentation leaves stable runtime descriptor fields unchanged")
+    check(f"Package: {STABLE_ID}.family" in control_for(tracked_control, "family"),
+          "family control file uses the independent launcher identity")
 
     # The seven query targets are the FIRST targets in the Makefile, and make takes the first
     # target it sees as the default goal. That made a bare `make` print the flavour and exit 0

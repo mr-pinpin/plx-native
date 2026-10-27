@@ -1,0 +1,86 @@
+{
+  "schema_version": 1,
+  "asset": "MrPomPom family app icon",
+  "generator": "Built-in image_gen.imagegen",
+  "prompt": "Use case: stylized-concept. One finished opaque square native family storybook app icon for MrPomPom. Input1 is Mama hedgehog's identity reference, input2 older PinPin hedgehog's identity reference, input3 baby MrPomPom hedgehog's identity reference; these are sprite sheets only for identities, NEVER reproduce a grid. Input4 supplies the warm dimensional storybook rendering style, not its bathing scene. Show exactly THREE family hedgehogs in a close affectionate group: Mama behind-left, older PinPin behind-right, and visibly smaller baby MrPomPom in front-center, cuddled between them. Preserve warm chestnut quills with pale tips, soft cream faces, dark button noses, round ears and large gentle brown eyes; baby has rounder proportions and especially wide innocent eyes. Three faces large and readable at80pixels, baby the focal point. Simple deep forest-teal background with soft golden storybook light; visually distinct from the navy Kids Cinema popcorn icon and burgundy Parents Cinema icon. No popcorn, no movie props, no text, no logos, no watermark, no additional characters, no clothes, no hats, no full scene, no contact sheet, no border. All silhouettes safely inside an8percent inset, opaque full-bleed square PNG.",
+  "transparent_background": false,
+  "exports": "Original generated PNG copied unchanged. Smaller opaque RGB PNGs are Lanczos resizing only.",
+  "rights_boundary": "Only newly commissioned app-branding outputs are included. Original book references remain under existing terms and are not copied or relicensed. No exclusive copyright is claimed in unprotectable AI-generated output.",
+  "references": [
+    {
+      "path": "mr-pinpin-source/docs/storyboard/images/atlas/family-production-v1/mama-a-v1.png",
+      "sha256": "181cbfa6b39355a42b003b9a35b2ff1947434c662190ea420874e5bfc34d3e0d"
+    },
+    {
+      "path": "mr-pinpin-source/docs/storyboard/images/atlas/family-production-v1/pinpin-a-v1.png",
+      "sha256": "ae95c02059f0af05a10fbabfaf354425b21ac1f7adbb434e8c82be5caa600b9c"
+    },
+    {
+      "path": "mr-pinpin-source/docs/storyboard/images/atlas/family-production-v1/mr-pompom-a-v1.png",
+      "sha256": "611f2a203382376e30b34e53ebf7512a84c2bdb4f3e41f5b48f839ac4678706a"
+    },
+    {
+      "path": "mr-pinpin-source/docs/storyboard/images/covers/home-sweet-home/miniature/miniature-v1.png",
+      "sha256": "c894462b0061fe27487c048cd626a73515f00fd46f3342df2955c54f5a66e26a"
+    }
+  ],
+  "outputs": [
+    {
+      "file": "mrpompom-family-icon-130-v1.png",
+      "width": 130,
+      "height": 130,
+      "mode": "RGB",
+      "bytes": 40479,
+      "sha256": "e12b8ca787671e7ab62525636054c5eade1c021f14fc434404f29740eb207ee5"
+    },
+    {
+      "file": "mrpompom-family-icon-160-v1.png",
+      "width": 160,
+      "height": 160,
+      "mode": "RGB",
+      "bytes": 59621,
+      "sha256": "aa552a540bc91d279e6c9012066a576b30cfd0000eece76ebe7d9d175daa139b"
+    },
+    {
+      "file": "mrpompom-family-icon-256-v1.png",
+      "width": 256,
+      "height": 256,
+      "mode": "RGB",
+      "bytes": 142017,
+      "sha256": "76fbd5c8bb467d17224ccd39378bd9f8d05764460328d4a9010ffea2886cebcd"
+    },
+    {
+      "file": "mrpompom-family-icon-320-v1.png",
+      "width": 320,
+      "height": 320,
+      "mode": "RGB",
+      "bytes": 213495,
+      "sha256": "4ebb830d57ae7f5ef7a27c996f4cd73d6b00306a24d430ffb9c1b618c0874a37"
+    },
+    {
+      "file": "mrpompom-family-icon-400-v1.png",
+      "width": 400,
+      "height": 400,
+      "mode": "RGB",
+      "bytes": 319652,
+      "sha256": "be7730e4f85fae2be119bbef21af70f97961c2d580b0a5f2afe6949f84115018"
+    },
+    {
+      "file": "mrpompom-family-icon-80-v1.png",
+      "width": 80,
+      "height": 80,
+      "mode": "RGB",
+      "bytes": 15758,
+      "sha256": "630475ba0c2d53b3a889bad67183bd5b377119e4d6861ad1f2c08e72944e479a"
+    },
+    {
+      "file": "mrpompom-family-icon-master-v1.png",
+      "width": 1254,
+      "height": 1254,
+      "mode": "RGB",
+      "bytes": 2534656,
+      "sha256": "8f033bfaaf0c8f5b702157fe2aa2fc6bbc8bc74f7261111d13dfbf8a02524dd7"
+    }
+  ],
+  "recorded_at_utc": "2026-10-27T00:11:24.731771+00:00"
+}

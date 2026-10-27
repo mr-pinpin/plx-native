@@ -73,17 +73,18 @@ const STABLE_PORT: u16 = 8910;
 /// rather than accidental — but the whole point of that guard having a named hatch is that
 /// somebody will use it.
 ///
-/// There are three flavours now, so there are three named ports rather than "stable, or one
+/// There are four flavours now, so there are four named ports rather than "stable, or one
 /// higher" — nightly was the third flavour the old comment here warned would need a real
 /// decision. `make -s print-appport` is the same rule for the shell (that is what
 /// `tools/tv-session.sh` passes to `stream-screen.py --app-port`), and `ci/flavor.py --selftest`
-/// compares the two. A FOURTH flavour needs its own decision in both places, the same way nightly
+/// compares the two. A new flavour needs its own decision in both places, the same way family
 /// just did, and the selftest is what will say so.
 pub(crate) fn default_port() -> u16 {
     match plx_base::paths::flavour() {
         None => STABLE_PORT,
         Some("debug") => STABLE_PORT + 1,
         Some("nightly") => STABLE_PORT + 2,
+        Some("family") => STABLE_PORT + 3,
         // Defensive rather than reachable: the Makefile's FLAVORS whitelist and `paths::app_id`'s
         // install-directory read are what actually decide a real television's flavour, so any
         // OTHER suffix here means something outside that whitelist got installed by hand. Falling

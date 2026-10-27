@@ -17,5 +17,12 @@
     "object_id": "plxstate.night",
     "display_title": "Cinema Kids",
     "icon_color": "#011a4a"
+  },
+  {
+    "name": "family",
+    "app_id": "com.beb.plxnative.family",
+    "object_id": "plxstate.family",
+    "display_title": "PinPin Home",
+    "icon_color": "#314902"
   }
 ]
