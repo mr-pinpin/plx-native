@@ -89,6 +89,12 @@ fn allowed_item(value: &Value, snapshot: Option<&Snapshot>) -> bool {
 fn scrub(value: &mut Value, snapshot: Option<&Snapshot>, sections: bool) {
     match value {
         Value::Object(object) => {
+            let counted = ["Metadata", "SearchResult", "Hub", "Directory"].into_iter()
+                .find_map(|key| object.get(key).and_then(Value::as_array).map(|items| (key, items.len())));
+            let number = |key: &str| object.get(key).and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok())));
+            let complete = number("offset").unwrap_or(0) == 0
+                && !object.get("more").and_then(Value::as_bool).unwrap_or(false)
+                && counted.is_some_and(|(_, count)| number("totalSize").is_none_or(|total| total <= count as i64));
             for (key, child) in object.iter_mut() {
                 if key == "Metadata" {
                     match child {
@@ -118,7 +124,26 @@ fn scrub(value: &mut Value, snapshot: Option<&Snapshot>, sections: bool) {
                     if key == "Hub" { for item in items { if let Some(item) = item.as_object_mut() {
                         item.insert("title".into(), Value::String("Cinema Kids".into()));
                         for art in ["thumb", "art", "composite"] { item.remove(art); }
+                        // This PMS labels personal-video shelves `clip` even when every
+                        // approved item's actual metadata is a movie. The Home projector
+                        // excludes clip shelves, so describe the retained movies truthfully.
+                        if item.get("Metadata").and_then(Value::as_array).is_some_and(|items|
+                            !items.is_empty() && items.iter().all(|m| m.get("type").and_then(Value::as_str) == Some("movie"))) {
+                            item.insert("type".into(), Value::String("movie".into()));
+                        }
                     } } }
+                }
+            }
+            if let Some((key, _)) = counted {
+                let visible = object.get(key).and_then(Value::as_array).map_or(0, Vec::len);
+                object.insert("size".into(), Value::from(visible));
+                if complete {
+                    object.insert("totalSize".into(), Value::from(visible));
+                    if object.contains_key("more") { object.insert("more".into(), Value::Bool(false)); }
+                } else {
+                    // The server's total includes unapproved items. A partial window
+                    // cannot establish the filtered global total; never report the raw one.
+                    object.remove("totalSize");
                 }
             }
         }
@@ -181,6 +206,32 @@ mod tests {
         let mut unknown = serde_json::json!({"MediaContainer":{"Metadata":[{"ratingKey":"10","title":"Bambi"}]}});
         Policy::kids(b"{}").filter("household", "/library/metadata/10", &mut unknown);
         assert!(unknown["MediaContainer"]["Metadata"].as_array().unwrap().is_empty());
+    }
+    #[test]
+    fn actual_pms_clip_shelf_with_curated_movies_is_a_visible_movie_shelf() {
+        let mut value = serde_json::json!({"MediaContainer":{"size":1,"Hub":[{"type":"clip","hubIdentifier":"home.videos.recent","size":4,"more":false,"Metadata":[
+            {"type":"movie","ratingKey":"99","title":"Obsession"},
+            {"type":"movie","ratingKey":"10","title":"Bambi"},
+            {"type":"movie","ratingKey":"11","title":"Toy Story 5"},
+            {"type":"movie","ratingKey":"98","title":"Obsession"}]}]}});
+        let before: super::super::models::Envelope = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(before.media_container.hub[0].kind, "clip", "actual upstream shape is skipped by Home's listable guard");
+        policy().filter("household", "/hubs", &mut value);
+        let after: super::super::models::Envelope = serde_json::from_value(value).unwrap();
+        let shelf = &after.media_container.hub[0];
+        assert_eq!(shelf.kind, "movie"); assert_eq!(shelf.size, 2); assert_eq!(shelf.total_size, 2);
+        assert!(!shelf.more);
+        assert_eq!(shelf.metadata.iter().map(|m| m.title.as_str()).collect::<Vec<_>>(), ["Bambi", "Toy Story 5"]);
+    }
+    #[test]
+    fn complete_counts_are_filtered_and_partial_global_totals_are_unknown() {
+        for partial in [false, true] {
+            let mut value=serde_json::json!({"MediaContainer":{"size":2,"offset":if partial {50} else {0},"totalSize":if partial {100} else {2},"Metadata":[{"ratingKey":"10"},{"ratingKey":"99"}]}});
+            policy().filter("household", "/library/sections/1/all", &mut value);
+            assert_eq!(value["MediaContainer"]["size"], 1);
+            if partial { assert!(value["MediaContainer"].get("totalSize").is_none()); }
+            else { assert_eq!(value["MediaContainer"]["totalSize"], 1); }
+        }
     }
     #[test]
     fn browse_search_hubs_detail_and_nested_extras_share_one_allowlist() {

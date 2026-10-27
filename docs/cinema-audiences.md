@@ -39,3 +39,16 @@ an administrative catalog change.
 This is a media audience inside Cinema, not a PIN lock on the television's other
 apps or the Parents launcher. Launcher appearance and actual playback require TV
 validation; host tests establish filtering and request policy only.
+
+Some PMS installations describe a personal-video recommendation hub as `clip`
+even when its item metadata identifies actual movies. After filtering, a Kids hub
+whose approved items are all movies is normalized to a movie shelf, allowing the
+existing Home projector to display those cards. This does not turn unknown clips
+into approved movies or fetch any unapproved cards. Real local-server JSON covered
+this case: Home retains Bambi and Toy Story 5 while adult results are removed.
+
+Complete response windows report their filtered counts. A partial window cannot
+establish an exact filtered global total, so that total is omitted rather than
+exposing the server's adult-inclusive number. Very large paged catalogs can still
+underfill a window; a future curated-index paging strategy must address that
+without pretending the raw offset is a filtered offset.
