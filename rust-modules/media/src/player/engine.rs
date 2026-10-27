@@ -6864,7 +6864,7 @@ mod live_join_tests {
         }
         feed_stream(&mt,&mut eng);
         assert_eq!(SHARED.pts_shift.load(Ordering::Relaxed),-1_000_000_000);
-        assert_eq!(eng.max_fed_video_pts,33_333_333);
+        assert_eq!(eng.max_fed_video_pts,(33_333_333+pts_nudge_ns()).max(0));
         assert!(!eng.live_join_pending);assert!(!eng.rebase_pending);assert!(!eng.prime_play);
         let mut vod=super::prime_livelock_tests::engine_after_reload();
         vod.prime_play=false;
@@ -6873,7 +6873,7 @@ mod live_join_tests {
         let queue=&mut **vod.aq_video.as_mut().unwrap() as *mut crate::aq::AuQueue;
         crate::aq::aq_push(queue,au.as_ptr(),au.len() as c_int,766_666_666,1,1);
         feed_stream(&mt,&mut vod);
-        assert_eq!(vod.max_fed_video_pts,766_666_666);
+        assert_eq!(vod.max_fed_video_pts,(766_666_666+pts_nudge_ns()).max(0));
         assert_eq!(SHARED.pts_shift.load(Ordering::Relaxed),0);
     }
     #[test]
