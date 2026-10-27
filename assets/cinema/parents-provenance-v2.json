@@ -1,0 +1,74 @@
+{
+  "schema_version": 1,
+  "asset": "Parents Cinema icon v2 — precise lower-arm removal",
+  "generator": "Built-in image_gen.imagegen",
+  "intent": "Edit of the existing Parents v1 master; not a new design",
+  "prompt": "Precise local anatomy correction to this exact Parents Cinema icon. REMOVE ONLY the TWO LOWER ARMS AND PAWS that are gripping the left and right sides of the popcorn bucket near its lower half. Those lower pair of arms are unwanted extra limbs. Fill only the areas exposed by their removal with the matching existing hedgehog torso fur and the unobstructed matching red-and-cream bucket stripes. KEEP the TWO UPPER ARMS: each parent still has exactly ONE arm/paw bringing popcorn toward their mouth. The finished image must show exactly TWO ARMS TOTAL, one upper eating arm for each parent, and ZERO lower bucket-holding arms. Preserve all other parts of the supplied image: the two faces, eyes, mouths, expressions, head positions, quills, popcorn, bucket shape and size, burgundy background, teal rim lighting, warm light, colors, framing, dimensions and composition. Do not zoom, crop, add limbs, redesign, add text or change character identity. This is an edit of the supplied image, not a fresh redesign. Opaque square PNG.",
+  "source_reference": "cinema-parents-icon-master-v1.png",
+  "generated_source_file": "exec-ac3bf630-147f-4105-bdf5-d738f073f1c5.png",
+  "transparent_background": false,
+  "visual_review": "Exactly two visible upper eating arms remain, one for each parent. Both lower bucket-holding arms/paws are gone. Faces, expressions, bucket, background, framing and colors were visually preserved.",
+  "export_method": "Selected original imagegen PNG copied unchanged as master; smaller PNGs use RGB Lanczos resizing only, with no painting/compositing.",
+  "iconColor": "#510109",
+  "rights_boundary": "Same specific Cinema generated-branding grant as README.md; original book/reference rights remain unchanged and no exclusive copyright is claimed in unprotectable AI-generated output.",
+  "source_sha256": "01cd1aafc95e46c3c29509c70390e9c6c6e52427086fd50351477ba313a7da09",
+  "recorded_at_utc": "2026-10-27T00:29:45.416365+00:00",
+  "outputs": [
+    {
+      "file": "cinema-parents-icon-130-v2.png",
+      "width": 130,
+      "height": 130,
+      "mode": "RGB",
+      "bytes": 35125,
+      "sha256": "4f8a328da87c3fe46fbaf65e64d6b33addd7a54e0a7a9fda37b606e2dc776b89"
+    },
+    {
+      "file": "cinema-parents-icon-160-v2.png",
+      "width": 160,
+      "height": 160,
+      "mode": "RGB",
+      "bytes": 51817,
+      "sha256": "c0a4a9bfb5ed58e5b3f053988336ba0a4c8929c210e1addb79df5f4cf910cbb9"
+    },
+    {
+      "file": "cinema-parents-icon-256-v2.png",
+      "width": 256,
+      "height": 256,
+      "mode": "RGB",
+      "bytes": 124487,
+      "sha256": "004efc100d62f74fdcd6e4466f640f63a328fa01aec812ba01209a7c9ca808b1"
+    },
+    {
+      "file": "cinema-parents-icon-320-v2.png",
+      "width": 320,
+      "height": 320,
+      "mode": "RGB",
+      "bytes": 189097,
+      "sha256": "22a32442ca8648ab902a36b5bc392ffdf381350186e4ea723a34cbb031ecad19"
+    },
+    {
+      "file": "cinema-parents-icon-400-v2.png",
+      "width": 400,
+      "height": 400,
+      "mode": "RGB",
+      "bytes": 286953,
+      "sha256": "3bb0684ea18fa0a6a8c364bc5b0bb8c27bf7f434d7ab82891e8960ccdea65f85"
+    },
+    {
+      "file": "cinema-parents-icon-80-v2.png",
+      "width": 80,
+      "height": 80,
+      "mode": "RGB",
+      "bytes": 13940,
+      "sha256": "7d030cc20c10b3c2b9bf3b1c7c837d362c9b000a3361142cc025fc44669eeff6"
+    },
+    {
+      "file": "cinema-parents-icon-master-v2.png",
+      "width": 1254,
+      "height": 1254,
+      "mode": "RGB",
+      "bytes": 2333728,
+      "sha256": "690f83085bf3013b2e7f6d8dbb48e6355bbfdfa83f0f30fffba9c09a707e9704"
+    }
+  ]
+}
