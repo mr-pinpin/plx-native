@@ -1509,7 +1509,7 @@ const SEEK_CUR: c_int = 1;
 const SEEK_END: c_int = 2;
 const AVSEEK_SIZE: c_int = 0x10000;
 
-/// **Which transport is under the AVIO.** The two are not interchangeable and the choice is made
+/// **Which transport is under the AVIO.** Network transports are not interchangeable; their choice is made
 /// from the SCHEME of the URL actually served — the part URL's, unless a plaintext open was
 /// redirected to https (`stream::redirect`), in which case the socket open hands over to curl.
 /// Never guessed per call.
@@ -1521,6 +1521,8 @@ const AVSEEK_SIZE: c_int = 0x10000;
 /// * [`Src::Curl`] is the https path ([`crate::curlio`]), which the demux thread owns outright.
 ///   `ff.rs` never learns curl-multi mechanics: all it can ask is `read`/`seek`/`size`/`status`/
 ///   `abort`, deliberately the same five questions the socket answers.
+/// * [`Src::Local`] is the opt-in private, hash-verified background cache; its regular File
+///   belongs to the demux worker and requires no network lifecycle.
 /// * [`Src::Idle`] is the placeholder after HLS HTTPS recycles the `CurlSource` into [`HlsNet`].
 ///   `avformat_close_input` may still invoke AVIO; this arm refuses I/O instead of dialing a
 ///   dummy socket.
@@ -1537,6 +1539,7 @@ enum Src {
     /// `curlio`'s registry instead of a pointer the engine holds. `curlio`'s module doc says why
     /// that is not the accident it looks like.
     Curl(Box<crate::curlio::CurlSource>),
+    Local(crate::local_cache::LocalFile),
     Idle,
 }
 
@@ -1547,6 +1550,7 @@ impl Src {
         match self {
             Src::Socket { hs, .. } => plx_net::stream::http_body_receipt(*hs),
             Src::Curl(cs) => cs.body_receipt(),
+            Src::Local(_) => plx_net::stream::BodyReceipt { ahead: 0, finished: true, stepped: false },
             Src::Idle => plx_net::stream::BodyReceipt {
                 ahead: 0,
                 finished: false,
@@ -2292,6 +2296,7 @@ impl AvioState {
             Src::Idle => true,
             Src::Socket { hs, .. } => plx_net::stream::http_body_done(*hs),
             Src::Curl(cs) => cs.body_complete(),
+            Src::Local(_) => true,
         }
     }
 
@@ -2318,7 +2323,7 @@ impl AvioState {
     /// redials on `Transport`. Do not raise CAP.
     fn drain_wire(&mut self) -> bool {
         const CAP: usize = 384 * 1024;
-        if matches!(self.src, Src::Idle) {
+        if matches!(self.src, Src::Idle | Src::Local(_)) {
             return false;
         }
         if unsafe { crate::aq::aq_is_aborted(self.aq) } {
@@ -2348,7 +2353,7 @@ impl AvioState {
                     plx_net::stream::http_drain_available(*hs, &mut self.bounce[start..])
                 }
                 Src::Curl(cs) => cs.drain_available(&mut self.bounce[start..]),
-                Src::Idle => 0,
+                Src::Idle | Src::Local(_) => 0,
             };
             if n > 0 {
                 self.bounce.truncate(start + n as usize);
@@ -2568,6 +2573,8 @@ extern "C" fn read_cb(op: *mut c_void, dst: *mut u8, n: c_int) -> c_int {
                     live_deadline,
                     checkpoint,
                 ),
+                Src::Local(_) if dst.is_null() || n <= 0 => 0,
+                Src::Local(file) => file.read(std::slice::from_raw_parts_mut(dst,n as usize)).map(|n|n as c_int).unwrap_or(-1),
                 Src::Idle => return AVERROR_EOF,
             };
             let wake =
@@ -2689,7 +2696,7 @@ extern "C" fn read_cb(op: *mut c_void, dst: *mut u8, n: c_int) -> c_int {
             }
             s.body_bytes = s.body_bytes.saturating_add(r as u64);
             s.off += r as i64;
-            SHARED.dg_net_rx.fetch_add(r as i64, Ordering::Relaxed);
+            if !matches!(s.src,Src::Local(_)) { SHARED.dg_net_rx.fetch_add(r as i64, Ordering::Relaxed); }
             return r;
         }
     }
@@ -2823,6 +2830,7 @@ extern "C" fn seek_cb(op: *mut c_void, offset: i64, whence: c_int) -> i64 {
             // deliberate: bytes from the head of the file, delivered as though they were the bytes
             // at `target`, are corruption that looks like success.
             Src::Curl(cs) => cs.seek(target),
+            Src::Local(file) => file.seek(target),
             Src::Idle => false,
         };
         if let Some(cs) = hopped_to_tls {
@@ -4229,6 +4237,7 @@ fn hls_source_read(
             &mut plx_base::checkpoint::NoCheckpoint,
         ),
         Src::Curl(cs) => cs.read_until(dst, deadline, &mut plx_base::checkpoint::NoCheckpoint),
+        Src::Local(_) => return Err(HlsExit::Failed("local files are progressive-only")),
         Src::Idle => return Err(HlsExit::Failed("HLS source idle")),
     };
     // The wake used to interrupt a blocked body read is deliberately transport-shaped (EOF for
@@ -8646,12 +8655,20 @@ mod pre_audio_headroom_tests {
 /// (`net/origin.rs`). `hs` is still passed on both paths — it is the Engine's, and it stays
 /// unused (fd = -1, published as `SHARED.hs_ptr`) when the origin turns out to be https.
 pub fn demux(
+    off: &plx_base::task::OffFrame, origin: plx_plex::plex::Origin, path: String,
+    acodec: String, abr: Option<(crate::route::HlsAbrControl, crate::route::WorkerTicket)>,
+    auto_original: Option<crate::route::AutoOriginalWatch>, aq: SendPtr<AuQueue>,
+    aqa: SendPtr<AuQueue>, hs: SendPtr<HttpStream>,
+) { demux_cached(off,origin,path,acodec,abr,auto_original,None,aq,aqa,hs); }
+
+pub fn demux_cached(
     off: &plx_base::task::OffFrame,
     origin: plx_plex::plex::Origin,
     path: String,
     acodec: String,
     abr: Option<(crate::route::HlsAbrControl, crate::route::WorkerTicket)>,
     auto_original: Option<crate::route::AutoOriginalWatch>,
+    local_cache: Option<crate::local_cache::Spec>,
     aq: SendPtr<AuQueue>,
     aqa: SendPtr<AuQueue>,
     hs: SendPtr<HttpStream>,
@@ -8827,7 +8844,19 @@ pub fn demux(
                 // before anything else can fail, because the read-out panel is the first thing anybody
                 // looks at when a part will not play and it must mean the same thing either way.
                 let open_began = std::time::Instant::now();
-                let (src, size) = if origin.is_tls() {
+                let local = local_cache.as_ref().and_then(|spec| {
+                    match crate::local_cache::LocalFile::open(off, spec, || crate::aq::aq_is_aborted(aq_p)) {
+                        Ok(file) => Some(file),
+                        Err(error) => { crate::player::log(&format!("ff: local cache unavailable ({:?}); retaining network fallback",error.kind())); None }
+                    }
+                });
+                if crate::aq::aq_is_aborted(aq_p) { break; }
+                let (src, size) = if let Some(file) = local {
+                    let size=file.size();SHARED.file_size.store(size,Ordering::Release);
+                    SHARED.dg_http_status.store(0,Ordering::Relaxed);
+                    crate::player::log("ff: verified local background cache selected");
+                    (Src::Local(file),size)
+                } else if origin.is_tls() {
                     let reservation = curl_open
                         .take()
                         .expect("TLS reserved its abort handle above");

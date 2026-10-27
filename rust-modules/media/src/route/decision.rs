@@ -112,6 +112,7 @@ struct RetryContext {
 pub struct PlaybackSession {
     /// App-owned video-only background, with no Plex identity or trailer lifecycle.
     background: bool,
+    background_cache: Option<crate::local_cache::Spec>,
     /// Frozen for one logical playback, including its retries and track changes.
     direct_play_mode: DirectPlayMode,
     /// This playback was refused by the cached device sandbox preflight. No Engine exists.
@@ -495,6 +496,7 @@ impl PlaybackSession {
     /// born as. Every String empty, every id 0 or `UNSET`, both HUD buffers NUL.
     pub const IDLE: PlaybackSession = PlaybackSession {
         background: false,
+        background_cache: None,
         direct_play_mode: DirectPlayMode::Auto,
         jail_load_blocked: false,
         native_start_refused: false,
@@ -581,6 +583,7 @@ impl PlaybackSession {
     pub fn publication(&self) -> PlaybackSession {
         let PlaybackSession {
             background: _,
+            background_cache: _,
             direct_play_mode,
             jail_load_blocked,
             native_start_refused,
@@ -649,6 +652,7 @@ impl PlaybackSession {
         } = self;
         PlaybackSession {
             background: false,
+            background_cache: None,
             direct_play_mode: *direct_play_mode,
             jail_load_blocked: *jail_load_blocked,
             native_start_refused: *native_start_refused,
@@ -7730,6 +7734,8 @@ pub fn play_pending() -> bool {
 /// This session is a hero preview. The route backstop must not steal it onto the player.
 pub fn is_background(ps: &PlaybackSession) -> bool { ps.background }
 pub(crate) fn mark_background(ps: &mut PlaybackSession) { ps.background = true; }
+pub(crate) fn set_background_cache(ps: &mut PlaybackSession, cache: Option<crate::local_cache::Spec>) { ps.background_cache = cache; }
+pub(crate) fn background_cache(ps: &PlaybackSession) -> Option<crate::local_cache::Spec> { ps.background_cache.clone() }
 
 pub fn is_preview(ps: &PlaybackSession) -> bool {
     ps.preview
@@ -8470,6 +8476,7 @@ fn apply_plan(ps: &mut PlaybackSession, meta: &mut plx_data::stores::metadata::M
         let preview = request.as_ref().is_some_and(|r| r.preview);
         *s = PlaybackSession {
             background: false,
+            background_cache: None,
             direct_play_mode: plan.direct_play_mode,
             jail_load_blocked: false,
             native_start_refused: false,
