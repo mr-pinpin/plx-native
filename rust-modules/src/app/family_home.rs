@@ -6,7 +6,7 @@ use plx_screens::family_home::Application;
 pub(crate) struct Config {version:u32,pub background:Option<Source>,apps:Vec<ApplicationConfig>}
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
-struct ApplicationConfig{id:String,title:String}
+struct ApplicationConfig{id:String,title:String,#[serde(default)] icon:Option<String>,#[serde(skip)] pixels:Option<plx_ui::owned_image::Pixels>}
 pub(crate) struct Runtime {config:Config,retry_at:u32}
 impl Config {
     pub fn load()->Result<Self,String>{
@@ -15,15 +15,16 @@ impl Config {
         let file=std::fs::File::open(path).map_err(|_|"family configuration unavailable")?;
         let mut bytes=Vec::new();file.take(32769).read_to_end(&mut bytes).map_err(|_|"family configuration unreadable")?;
         if bytes.len()>32768{return Err("family configuration oversized".into());}
-        let config:Self=serde_json::from_slice(&bytes).map_err(|_|"family configuration invalid")?;
+        let mut config:Self=serde_json::from_slice(&bytes).map_err(|_|"family configuration invalid")?;
         if config.version!=1||!(1..=5).contains(&config.apps.len())||config.apps.iter().map(|app|&app.id).collect::<std::collections::BTreeSet<_>>().len()!=config.apps.len()||config.apps.iter().any(|app|app.id.is_empty()||app.id.len()>128
             ||!app.id.bytes().all(|c|c.is_ascii_alphanumeric()||c==b'.'||c==b'-'||c==b'_')||app.title.is_empty()||app.title.len()>80
             ||app.title.chars().any(char::is_control))||config.background.as_ref().is_some_and(|source|!source.valid()){
             return Err("family configuration rejected".into());
         }
+        for app in &mut config.apps { app.pixels=app.icon.as_deref().and_then(load_icon); }
         Ok(config)
     }
-    pub fn applications(&self)->Vec<Application>{self.apps.iter().map(|app|Application{id:app.id.clone(),title:app.title.clone()}).collect()}
+    pub fn applications(&self)->Vec<Application>{self.apps.iter().map(|app|Application{id:app.id.clone(),title:app.title.clone(),icon:app.pixels.clone()}).collect()}
     pub fn empty()->Self{Self{version:1,background:None,apps:Vec::new()}}
 }
 impl Runtime {
@@ -39,4 +40,16 @@ impl Runtime {
             self.retry_at=now.wrapping_add(5000);
         }
     }
+}
+
+// Administrative local PNGs only; bound file bytes and IHDR dimensions before decoding.
+fn load_icon(path:&str)->Option<plx_ui::owned_image::Pixels>{
+    use std::io::Read;
+    if !path.starts_with("/media/internal/"){return None;}
+    let mut bytes=Vec::new();std::fs::File::open(path).ok()?.take(1048577).read_to_end(&mut bytes).ok()?;
+    if bytes.len()>1048576||bytes.len()<24||&bytes[..8]!=b"\x89PNG\r\n\x1a\n"{return None;}
+    let w=u32::from_be_bytes(bytes[16..20].try_into().ok()?);let h=u32::from_be_bytes(bytes[20..24].try_into().ok()?);
+    if w==0||h==0||w>512||h>512{return None;}
+    let (w,h,rgba)=plx_gfx::img::img_decode_owned(&bytes)?;
+    plx_ui::owned_image::Pixels::new(w.try_into().ok()?,h.try_into().ok()?,rgba)
 }

@@ -9,10 +9,10 @@ use plx_ui::widgets::{Button, ControlGround, CtlPop};
 use crate::registry::{AppLike, AppFx, LoopReq};
 
 #[derive(Clone, PartialEq, Eq)]
-pub struct Application { pub id: String, pub title: String }
+pub struct Application { pub id: String, pub title: String, pub icon: Option<plx_ui::owned_image::Pixels> }
 
-const TILE_W: f32 = 272.0;
-const TILE_H: f32 = 128.0;
+const TILE_W: f32 = 192.0;
+const TILE_H: f32 = 192.0;
 const BOTTOM_INSET: f32 = 96.0;
 const IDLE_MS: u32 = 8000;
 const GROUP: GroupId = GroupId(0);
@@ -23,10 +23,12 @@ pub struct FamilyHomeScreen {
     idle_ms: u32,
     alpha: Spring,
     pop: CtlPop<5>,
+    icons: Vec<plx_ui::owned_image::OwnedImage>,
 }
 impl FamilyHomeScreen {
     pub fn new(entry: EntryId, apps: Vec<Application>) -> Self {
-        Self { entry, apps, idle_ms: 0, alpha: Spring::at(1.0), pop: CtlPop::new() }
+        let icons=(0..apps.len()).map(|_|Default::default()).collect();
+        Self { entry, apps, icons, idle_ms: 0, alpha: Spring::at(1.0), pop: CtlPop::new() }
     }
     fn rect(&self, index: usize) -> Option<Rect> {
         let widths = [Item::new(TILE_W); 5];
@@ -91,14 +93,25 @@ impl<H:AppLike> Screen<H> for FamilyHomeScreen {
     fn name(&self)->&'static str{"family_home"}
     fn state(&self)->&dyn LogicalState{self}
     fn crumb(&self,_:&Cx<'_,H>)->Option<std::borrow::Cow<'_,str>>{None}
-    fn prepare(&mut self,_:&mut plx_ui::frame::Budget,_:&Cx<'_,H>){}
+    fn prepare(&mut self,budget:&mut plx_ui::frame::Budget,_:&Cx<'_,H>){
+        for (app,icon) in self.apps.iter().zip(&mut self.icons){if let Some(pixels)=&app.icon{icon.prepare(pixels,budget);}}
+    }
     fn draw(&mut self,f:&mut DrawFrame<'_,'_,H>){
         let p=f.painter.alpha(f.page_alpha*self.alpha.pos.clamp(0.0,1.0));
+        if let (Some(first),Some(last))=(self.rect(0),self.rect(self.apps.len().saturating_sub(1))){
+            p.rrect_sheened(Rect::new(first.x-24.0,first.y-24.0,last.x+last.w-first.x+48.0,TILE_H+48.0),32.0,theme::MENU_GLASS_BOT);
+        }
         for (i,app) in self.apps.iter().enumerate(){
             let Some(rect)=self.rect(i)else{continue};let Ok(label)=CString::new(app.title.as_str())else{continue};
             let focused=f.cx.focus.current.is_some_and(|k|k==self.key(i));
-            Button::new(label.as_ptr(),theme::size::BODY,rect).focused(focused).ground(ControlGround::Unkeyed)
-                .scale(self.pop.scale(i)).draw(&Env::inert(),p);
+            if self.icons[i].ready(){
+                let popped=rect.scaled(self.pop.scale(i));
+                self.icons[i].draw(p,popped,32.0);
+                if focused {plx_ui::label::Label::new(label.as_ptr(),theme::size::BODY,theme::TEXT_PRIMARY).h(plx_ui::label::HAlign::Center).draw(p,Rect::new(rect.x-80.0,rect.y-64.0,rect.w+160.0,48.0));}
+            }else{
+                Button::new(label.as_ptr(),theme::size::BODY,rect).focused(focused).ground(ControlGround::Unkeyed)
+                    .scale(self.pop.scale(i)).draw(&Env::inert(),p);
+            }
             f.stop(p,Stop{key:self.key(i),rect,rest_rect:rect,clip:Rect::FULL,hover:Hover::Focus,activate:Activate::Press});
         }
     }

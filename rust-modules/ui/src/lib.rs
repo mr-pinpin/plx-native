@@ -95,6 +95,7 @@ pub mod replay; // RESTRUCTURE (spec §5.5): `--targets` replay of a recording o
 pub mod screen; // RESTRUCTURE spike (spec §6.1, §7.1): Screen, Focusable, Composed/Part, DrawFrame
 pub mod table;
 pub mod table_screen; // Header / TableScreen / DocumentScreen — the route family's screens as components (phase 5a)
+pub mod owned_image;
 pub mod tex; // RESTRUCTURE spike (spec §10): TexCache — the render-resource half of image caching
 pub mod testapp; // RESTRUCTURE (spec §15.1): a screen under test with no SDL — dispatcher + fixture rig + virtual clock
 pub mod testpat; // dev-only SYNTHETIC GROUNDS — the page's picture replaced by a chosen pattern
