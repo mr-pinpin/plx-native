@@ -200,4 +200,33 @@ mod tests {
         loop{if seen.recv_timeout(deadline.saturating_duration_since(test_now())).unwrap()==Packet::neutral(){break;}}
     }
 
+    #[test]
+    fn managed_position_recovers_lost_ack_without_motion_or_replaying_edges(){
+        let (sent,seen)=std::sync::mpsc::channel();
+        let mut failed=false;
+        let sender=Mutex::new(move|packet:&Packet|{sent.send(packet.clone()).unwrap();if packet.engaged&&!failed{failed=true;false}else{true}});
+        let bridge=Bridge::with_sender_policy(true,move|packet|sender.lock().unwrap()(packet)).unwrap();
+        assert!(seen.recv_timeout(Duration::from_secs(2)).unwrap()==Packet::neutral());
+        bridge.update(|packet|{packet.pointer=[0.8,0.4];packet.engaged=true;packet.activate=true;packet.zoom=2.0;});
+        let lost=seen.recv_timeout(Duration::from_secs(2)).unwrap();assert!(lost.engaged&&lost.activate);assert_eq!(lost.zoom,2.0);
+        assert!(seen.recv_timeout(Duration::from_secs(2)).unwrap()==Packet::neutral(),"failed steering must acknowledge neutral before resuming");
+        let recovered=seen.recv_timeout(Duration::from_secs(1)).expect("stationary managed position must resume after neutral acknowledgement");
+        assert_eq!(recovered.pointer,[0.8,0.4]);assert!(recovered.engaged);assert!(!recovered.activate);assert_eq!(recovered.zoom,0.0);
+        drop(bridge);
+        let deadline=test_now()+Duration::from_secs(2);
+        loop{if seen.recv_timeout(deadline.saturating_duration_since(test_now())).unwrap()==Packet::neutral(){break;}}
+    }
+
+    #[test]
+    fn explicit_release_during_lost_ack_never_resurrects_managed_position(){
+        let (sent,seen)=std::sync::mpsc::channel();let (resume,wait)=std::sync::mpsc::channel();let mut failed=false;
+        let sender=Mutex::new(move|packet:&Packet|{sent.send(packet.clone()).unwrap();if packet.engaged&&!failed{failed=true;wait.recv_timeout(Duration::from_secs(2)).unwrap();false}else{true}});
+        let bridge=Bridge::with_sender_policy(true,move|packet|sender.lock().unwrap()(packet)).unwrap();
+        assert!(seen.recv_timeout(Duration::from_secs(2)).unwrap()==Packet::neutral());
+        bridge.pointer(Some([0.8,0.4]));assert!(seen.recv_timeout(Duration::from_secs(2)).unwrap().engaged);
+        bridge.release();resume.send(()).unwrap();assert!(seen.recv_timeout(Duration::from_secs(2)).unwrap()==Packet::neutral());
+        assert!(seen.recv_timeout(Duration::from_millis(150)).is_err(),"explicit release must not re-arm old steering");
+        drop(bridge);assert!(seen.recv_timeout(Duration::from_secs(2)).unwrap()==Packet::neutral());
+    }
+
 }
