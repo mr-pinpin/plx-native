@@ -156,6 +156,7 @@ mod tests {
     fn controller()->Controller{Controller::new(Config{query_url:"http://192.0.2.1:4188/query".into(),scene:"forest".into()})}
     #[test]
     fn one_control_timeout_preserves_scene_and_recovery_resets_grace(){
+        let _serial=plx_base::testlock::serial();
         super::super::clock::set_replay(100);
         let mut c=controller();c.select("atlas");c.active=Some(grant("atlas"));
         assert!(c.accept(Reply::Heartbeat(Heartbeat::Transient),true).is_none());
@@ -167,6 +168,7 @@ mod tests {
     }
     #[test]
     fn repeated_timeouts_or_elapsed_grace_yield_home_once(){
+        let _serial=plx_base::testlock::serial();
         let mut c=controller();c.select("atlas");c.active=Some(grant("atlas"));
         for _ in 0..2{assert!(c.accept(Reply::Heartbeat(Heartbeat::Transient),true).is_none());}
         assert!(matches!(c.accept(Reply::Heartbeat(Heartbeat::Transient),true),Some(Change::Passive)));
@@ -222,6 +224,7 @@ mod tests {
     }
     #[test]
     fn retry_deadline_uses_replay_time_and_wraps(){
+        let _serial=plx_base::testlock::serial();
         super::super::clock::set_replay(u32::MAX-2000);
         let mut controller=controller();controller.failed();assert_eq!(controller.next,2999);
         super::super::clock::set_replay(3000);controller.select("atlas");assert_eq!(controller.next,3000);
@@ -237,6 +240,7 @@ mod tests {
     }
     #[test]
     fn scene_change_during_heartbeat_survives_old_failure_and_can_return_home(){
+        let _serial=plx_base::testlock::serial();
         let mut controller=controller();controller.active=Some(grant("forest"));controller.select("atlas");
         controller.accept(Reply::Heartbeat(Heartbeat::Healthy),true);assert!(controller.next<=super::super::clock::now());
         assert!(matches!(controller.accept(Reply::Heartbeat(Heartbeat::Fatal),true),Some(Change::Passive)));
