@@ -41,5 +41,23 @@
       ]
     }
   ],
-  "notes": "Masters are unmodified tool outputs. Baby identity verified from existing production atlas; no literal Chapter 1400 was found. Reference artwork remains private/excluded. PNG exports use resizing only."
+  "notes": "Masters are unmodified tool outputs. Baby identity verified from existing production atlas; no literal Chapter 1400 was found. Reference artwork remains private/excluded. PNG exports use resizing only.",
+  "exports": [
+    {
+      "path": "cinema/cinema-kids-icon-512-v2.png",
+      "width": 512,
+      "height": 512,
+      "bytes": 415553,
+      "sha256": "ad8750cc04977df7425bc689511ca8cd5d55e72c72e52a0f6694c35c9d7218ec",
+      "method": "macOS sips resize only; no creative edits"
+    },
+    {
+      "path": "family/book-family-icon-512-v2.png",
+      "width": 512,
+      "height": 512,
+      "bytes": 533479,
+      "sha256": "7ac191ab301eefb777cc75d4fb459d8415d0d9f9e99190bc54e110d8bd2ac840",
+      "method": "macOS sips resize only; no creative edits"
+    }
+  ]
 }
