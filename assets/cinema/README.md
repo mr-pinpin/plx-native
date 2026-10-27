@@ -45,3 +45,8 @@ with a burgundy background. Its size exports use the same naming convention.
 `parents-provenance-v1.json` records its exact prompt, references and hashes.
 The narrow new-output distribution grant above also covers these Parents
 edition files; it does not extend to the original book reference artwork.
+
+Parents v2 removes only the two lower bucket-holding arms from v1, retaining one
+upper eating arm per parent. Its master and exports use the `-v2.png` suffix;
+`parents-provenance-v2.json` records the precise edit prompt and hashes. The
+original Kids files and Parents v1 remain unchanged.
