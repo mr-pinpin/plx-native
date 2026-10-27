@@ -4,9 +4,9 @@ The `family` package is an optional launcher alongside the Cinema and book appli
 
 The launcher uses the live video plane without a static replacement image or cover fade. The legacy `cover` field is accepted only for configuration compatibility and is never loaded or rendered. Icons retain their separate 1 MiB/512×512 limits.
 
-The background can also declare `localCache: {"sha256": "<64 lowercase hex characters>", "bytes": 83963525}`. This names only `/media/internal/pinpin-family/cache/<sha256>.mp4`; it does not accept an arbitrary file path or relax HTTP(S) URL validation. The existing demux worker opens a regular, non-symlink file, checks its declared size (at most 128 MiB), verifies SHA-256 in cancellable chunks, and retains that same open file for AVIO reads and seeks. Missing or corrupt cache files retain the configured HTTP(S) background as fallback. Verification and file reads run off the UI thread. Private media is provisioned separately from the public application package.
+The background can also declare `localCache: {"sha256": "<64 lowercase hex characters>", "bytes": 83963525}`. This names only `/media/internal/pinpin-family/cache/<sha256>.mp4`; it does not accept an arbitrary file path or relax HTTP(S) URL validation. The existing demux worker opens a regular, non-symlink file, checks its declared size (at most 128 MiB), retains that same open file for AVIO reads and seeks. An administrator can verify an installed clip once with `node tools/write-local-cache-receipt.cjs SHA256 BYTES`, after making its cache directory root-owned and protected, and its media file root-owned and read-only. The writer hashes the actual opened file, checks its complete identity before and after, and atomically publishes an app-readable receipt. On subsequent opens the demux worker reuses that proof only when root ownership, permissions, configured hash/size, device, inode and exact nanosecond modification/change timestamps still match the opened file. A missing, malformed, stale or unprotected receipt falls back to the original cancellable SHA-256 check; it never becomes a verification override. Missing or corrupt cache files retain the configured HTTP(S) background as fallback. Verification and file reads run off the UI thread. Private media is provisioned separately from the public application package.
 
-A private, versioned configuration lives at `/media/internal/.com.beb.plxnative.family-home.json`. It accepts one to five distinct application IDs. A household can choose four dock entries; there are no mandatory Apps or Edit buttons. An example using documentation-only addresses and identifiers is:
+A private, versioned configuration lives at `/media/internal/.com.beb.plxnative.family-home.json`. It accepts one to five distinct application IDs. The household dock uses three entries: Cinema Kids, Cinema Parents and the book. There are no mandatory Apps or Edit buttons, and external-service shortcuts do not belong in this row. An example using documentation-only addresses and identifiers is:
 
 ```json
 {
@@ -25,12 +25,13 @@ A private, versioned configuration lives at `/media/internal/.com.beb.plxnative.
       "title": "Children",
       "icon": "/media/internal/pinpin-family/children.png"
     },
-    {"id": "org.example.parents", "title": "Parents"}
+    {"id": "org.example.parents", "title": "Parents"},
+    {"id": "org.example.book", "title": "Book"}
   ]
 }
 ```
 
-The optional application icons must be local PNGs under `/media/internal/`, at most one MiB and 512 by 512 pixels. Invalid icons retain the title button. The application reads and decodes artwork during configuration bootstrap; the shared UI resource uploads textures during its existing prepare budget. Icons grow with the shared focus spring. The dock's translucent theme tint does not blur the separate hardware video plane.
+The optional application icons must be local PNGs under `/media/internal/`, at most one MiB and 512 by 512 pixels. Missing artwork retains a focusable fallback tile. Titles remain application metadata, but no title labels are drawn above or inside dock controls. The application reads and decodes artwork during configuration bootstrap; the shared UI resource uploads textures during its existing prepare budget. Icons grow with the shared focus spring. The dock material uses half its previous opacity while icons remain opaque. Its translucent theme tint does not blur the separate hardware video plane.
 
 The top band displays local system time and the existing localized calendar date. A presentation adapter samples wall time separately from the application's frame/replay clock and delivers status to the screen. The dock and top band remain visible at all times; inactivity never turns the launcher into a video-only view. Resume and ordinary Home relaunch show the dock immediately, independently of video buffering; a parked frame gap does not consume the new idle interval. Root Back stays in the launcher and returns an active scene to its default.
 
