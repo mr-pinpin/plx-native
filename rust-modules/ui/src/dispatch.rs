@@ -22,7 +22,7 @@ use super::containers::stack::Instance;
 use super::containers::transition::{Immediate, Transition};
 use super::containers::{Life, Navigation};
 use super::focus::Outcome;
-use super::frame::{Budget, RenderSet};
+use super::frame::{Budget, RenderReport, RenderSet};
 use super::geom::IndexElem;
 use super::hit::PointerKind;
 use super::input::{InputMachine, PressEvent};
@@ -425,6 +425,8 @@ pub struct Dispatcher<H: Host> {
     /// ([`Self::execute_deliver`]). Not part of the logical state: it observes, it decides nothing.
     dead_presses: plx_base::diag::heartbeat::health::DeadPresses<Key>,
     render_breach_logged: bool,
+    /// Application-owned textures outside screens, charged to the same byte ceiling.
+    external_render: RenderReport,
     /// The input owner answered `Handled::No` to a BACK: resolve it over its stack at commit.
     pending_back: bool,
     /// The tick of the last `frame_with`, for a `draw` the caller runs later in its own frame.
@@ -482,6 +484,7 @@ where
             cold: Default::default(),
             dead_presses: Default::default(),
             render_breach_logged: false,
+            external_render: RenderReport::NONE,
             pending_back: false,
             last_tick: Tick::default(),
             lifted_last: None,
@@ -868,6 +871,10 @@ where
             .then(|| (nav.tabs.strip_group(), nav.tabs.strip.as_slice()));
         Some(PageWithStrip { page, strip, strip_fallback: nav.tabs.strip_fallback, strip_selected: nav.tabs.strip_selected, entry })
     }
+
+    /// Application resources count toward residency, not navigation page/surface cardinality.
+    /// Publish after prepare and replace with NONE when their owner releases them.
+    pub fn set_external_render_report(&mut self,report:RenderReport){self.external_render=report;}
 
     /// **Is this frame's picture a hardware VIDEO PLANE?** (spec §9, §16 risk 10.)
     ///
@@ -1585,7 +1592,7 @@ where
         let mut set = RenderSet {
             // the shared poster/logo residency (ui/tex.rs) is the one pool rule (c) sums beside
             // the screens' own renders and the FrameCache
-            extra_bytes: super::tex::resident_bytes() + glass.as_ref().map_or(0, |g|g.sources.borrow().resident_bytes()),
+            extra_bytes: self.external_render.bytes + super::tex::resident_bytes() + glass.as_ref().map_or(0, |g|g.sources.borrow().resident_bytes()),
             ..Default::default()
         };
         // A PageDip keeps the committed top as the visible/input page throughout its OUT half.
@@ -1882,7 +1889,7 @@ where
             self.input.hit.swap();
         }
         if plx_gfx::gfx::blur_source_pass() { report.render_set = set; return; }
-        set.extra_bytes = super::tex::resident_bytes() + glass.as_ref().map_or(0, |g|g.sources.borrow().resident_bytes());
+        set.extra_bytes = self.external_render.bytes + super::tex::resident_bytes() + glass.as_ref().map_or(0, |g|g.sources.borrow().resident_bytes());
         if let Err(breach) = set.check() {
             // The policy itself is `frame::on_breach` — assert on the host, log once on a
             // television — so that both halves are reachable from a test.
@@ -3242,6 +3249,24 @@ mod edge_back_tests {
         fn back_at_root(&mut self) {
             self.roots += 1;
         }
+    }
+
+    #[test]
+    fn application_texture_bytes_join_the_actual_dispatcher_render_census(){
+        let _serial=plx_base::testlock::serial();
+        let (mut dispatcher,mut rig)=booted();
+        dispatcher.present.note(plx_machine::present::PresentEvent::Damage(plx_machine::present::Provenance::Lifecycle));
+        let baseline=dispatcher.frame(&mut rig,tick(32),vec![],vec![],&mut NoTap).render_set;
+        dispatcher.set_external_render_report(RenderReport::one(512,288));
+        dispatcher.present.note(plx_machine::present::PresentEvent::Damage(plx_machine::present::Provenance::Lifecycle));
+        let report=dispatcher.frame(&mut rig,tick(48),vec![],vec![],&mut NoTap).render_set;
+        assert_eq!(report.extra_bytes,baseline.extra_bytes+512*288*4);
+        assert_eq!(report.total_bytes(),baseline.total_bytes()+512*288*4);
+        assert!(report.check().is_ok());
+        dispatcher.set_external_render_report(RenderReport::NONE);
+        dispatcher.present.note(plx_machine::present::PresentEvent::Damage(plx_machine::present::Provenance::Lifecycle));
+        let cleared=dispatcher.frame(&mut rig,tick(64),vec![],vec![],&mut NoTap).render_set;
+        assert_eq!(cleared.extra_bytes,baseline.extra_bytes,"released resources leave the census");
     }
 
     fn booted() -> (Dispatcher<FixtureHost>, EdgeBackRig) {

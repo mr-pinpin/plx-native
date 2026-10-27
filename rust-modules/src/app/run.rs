@@ -477,7 +477,8 @@ unsafe fn prepare_window(app: &mut App, fr: &mut Frame) {
     //   there is no pixel to show over the picture — film included — wherever it runs; it stays
     //   here so the upload's cost is bounded by the budget and off the draw.
     if fr.present {
-        if let Some(home)=app.family_home.as_mut(){home.prepare_cover(&mut app.pages.budget);}
+        let cover=if let Some(home)=app.family_home.as_mut(){home.prepare_cover(&mut app.pages.budget);home.cover_report()}else{plx_ui::frame::RenderReport::NONE};
+        app.pages.set_external_render_report(cover);
         // A Tracks/More page's text, recorded in `update` or, on the mount frame, in the overlay's
         // `prepare` (`PanelMotion::prewarm_text`), and uploaded here: `fr.present` already carries the window-activity gate, so a frame that
         // does not present, or one while the window is backgrounded, uploads nothing.

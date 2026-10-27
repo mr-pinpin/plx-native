@@ -36,6 +36,7 @@ impl Runtime {
     pub fn prepare_cover(&mut self,budget:&mut plx_ui::frame::Budget){
         if let Some(pixels)=&self.config.cover_pixels{self.cover_image.prepare(pixels,budget);}
     }
+    pub fn cover_report(&self)->plx_ui::frame::RenderReport{self.cover_image.render_report()}
     pub fn draw_cover(&self,bound:bool,seen_frame:bool){
         if cover_required(bound,seen_frame){self.cover_image.draw(plx_ui::Painter::root(),plx_ui::Rect::FULL,0.0);}
     }
