@@ -36,6 +36,28 @@ The existing resident may mirror its `home.status` observation to `/media/intern
 
 Background declarations must describe the actual video: supported H.264/HEVC codec, source dimensions and source frame rate. The initial H.264 bound is 30 fps; HEVC is accepted up to 60 fps. No higher-rate source is relabelled to satisfy these bounds. This is video-only playback, with no invented audio stream, Plex watch identity, queue or timeline reporting. A looping VOD restarts at its end through its own owner; it does not spend the trailer preview seek budget.
 
+An optional background `localCache` object contains `sha256` (64 lowercase hex
+digits) and `bytes` (1–134217728). It names only
+`/media/internal/pinpin-family/cache/<sha256>.mp4`. The existing demux worker
+verifies the regular file's size and SHA-256 with cancellation checks, retains
+that same file handle for custom-AVIO reads and seeks, and uses the original
+HTTP(S) URL when cache verification fails. Configuration never accepts an
+arbitrary file URL. Native decoding of the cache remains a device test.
+
+The top-level `pointerShuttle: true` optionally steers this passive looping
+background through existing native pause, absolute-seek and resume operations.
+It is off by default. Fresh horizontal pointer displacement from the center
+sets signed timeline velocity, proportional up to eight seconds of source time
+per second at the edges; the center dead zone holds the current picture.
+Absolute seeks are coalesced to at most four per second and wait for loading,
+pending seeks and seek preroll to settle. Frame-clock gaps are bounded and
+targets wrap within the measured duration. This approximates reverse motion
+through seeks; it does not claim a hardware negative playback-rate API.
+Dock/modal/D-pad handoff, hiding, leaving the scene or 750 ms of stale input
+releases steering and resumes ambient playback. A managed Mini scene keeps its
+own input authority and is never controlled by this local shuttle. Actual
+smoothness and pointer behavior still require TV verification.
+
 Configuration, service URLs and any capabilities remain private. Installing this package does not replace Cinema or book package identities, change the factory launcher, or redirect the remote's Home button. Those integrations require their own reversible deployment steps.
 
 
