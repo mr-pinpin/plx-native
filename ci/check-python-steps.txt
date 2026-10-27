@@ -323,3 +323,6 @@ python3 ci/test_disk_preflight.py
 
 # Household flavor localization must preserve declared identity and Cinema profiles.
 python3 ci/test_family_resources.py
+
+# Administrative root receipt must preserve exact file identity and verify before publishing.
+python3 ci/test_local_cache_receipt.py
