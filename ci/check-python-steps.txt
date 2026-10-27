@@ -320,3 +320,6 @@ python3 ci/test_disk_budget.py
 # taken, a live holder is waited on for a bounded time and no plan is made while it runs (a finished or stale holder is taken over); the inventory cache; a pretend emergency is never planned over real
 # trees. `make -n` and `make -s print-*` only, no cargo.
 python3 ci/test_disk_preflight.py
+
+# Household flavor localization must preserve declared identity and Cinema profiles.
+python3 ci/test_family_resources.py

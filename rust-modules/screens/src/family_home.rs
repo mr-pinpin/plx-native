@@ -172,7 +172,7 @@ mod scene_guard_tests {
 #[cfg(test)]
 mod resume_tests {
     use super::*;
-    use crate::family::InnerHost;
+    use crate::registry::TestAppHost as InnerHost;
     use plx_machine::machine::{Tick,FocusRead,PressRead,InputOwner,MachineId};
     #[test]
     fn family_resume_shows_the_dock_before_video_and_ignores_the_parked_frame_gap(){
@@ -196,7 +196,7 @@ mod resume_tests {
 #[cfg(test)]
 mod dock_presentation_tests {
     use super::*;
-    use crate::family::InnerHost;
+    use crate::registry::TestAppHost as InnerHost;
     use plx_machine::machine::{Tick,FocusRead,PressRead,InputOwner};
     #[test]
     fn three_icon_dock_has_no_app_labels_and_keeps_three_centered_click_targets(){
