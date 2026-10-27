@@ -55,8 +55,10 @@ targets wrap within the measured duration. This approximates reverse motion
 through seeks; it does not claim a hardware negative playback-rate API.
 Actual X or Y coordinate changes retain control. Duplicate stationary packets
 do not renew ownership or reclaim it after release. After one complete second
-without movement, ambient playback resumes once an in-flight seek settles and
-the resume is accepted; refusals retain ownership for a bounded retry. Dock,
+without movement, ownership returns to ambient playback. An already playing
+centre continues without another Play call; paused seek steering resumes after
+the in-flight seek settles and Resume is accepted. Refusals retain ownership
+for a bounded retry. Dock,
 modal and D-pad handoff, window backgrounding and leaving the scene retain their
 existing input priority. A managed Mini scene keeps its
 own input authority and is never controlled by this local shuttle. Actual
