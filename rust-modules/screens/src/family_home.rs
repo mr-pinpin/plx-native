@@ -36,12 +36,15 @@ impl FamilyHomeScreen {
         let icons=(0..apps.len()).map(|_|Default::default()).collect();
         Self { entry, apps, icons, status:Status::default(), idle_ms: 0, alpha: Spring::at(1.0), pop: CtlPop::new() }
     }
-    fn rect(&self, index: usize) -> Option<Rect> {
+    fn rect(&self, index: usize) -> Option<Rect> { dock_rect(self.apps.len(),index) }
+}
+fn dock_rect(count:usize,index:usize)->Option<Rect>{
         let widths = [Item::new(TILE_W); 5];
-        let row = HStack::new(&widths[..self.apps.len().min(5)], theme::space::MD, Align::Centre(plx_ui::consts::SCR_W / 2.0));
+        let row = HStack::new(&widths[..count.min(5)], theme::space::MD, Align::Centre(plx_ui::consts::SCR_W / 2.0));
         let (x,w) = row.span(index)?;
         Some(Rect::new(x, plx_ui::consts::SCR_H - BOTTOM_INSET - TILE_H, w, TILE_H))
-    }
+}
+impl FamilyHomeScreen {
     fn key(&self, i: usize) -> FocusKey<u32> { FocusKey { entry: self.entry, elem: i as u32 } }
     fn activate<H: AppLike>(&self, elem: u32, fx: &mut Effects<'_, H>) -> Handled {
         let Some(_app) = self.apps.get(elem as usize) else { return Handled::No };
@@ -137,4 +140,30 @@ impl<H:AppLike> Screen<H> for FamilyHomeScreen {
     fn hit_source(&self)->HitSource{HitSource::Engine}
     fn as_any(&self)->Option<&dyn std::any::Any>{Some(self)}
     fn as_any_mut(&mut self)->Option<&mut dyn std::any::Any>{Some(self)}
+}
+
+/// Scene input cannot own a dock control or its focus-growth margin.
+pub fn scene_point(count:usize,x:f32,y:f32)->Option<[f32;2]>{
+    let w=plx_ui::consts::SCR_W;let h=plx_ui::consts::SCR_H;
+    if !x.is_finite()||!y.is_finite()||x<0.0||y<0.0||x>w||y>h{return None;}
+    if let (Some(first),Some(last))=(dock_rect(count,0),dock_rect(count,count.saturating_sub(1))){
+        if x>=first.x-24.0&&x<=last.x+last.w+24.0&&y>=first.y-24.0&&y<=first.y+TILE_H+24.0{return None;}
+    }
+    Some([x/w,y/h])
+}
+
+#[cfg(test)]
+mod scene_guard_tests {
+    use super::*;
+    #[test]
+    fn scene_coordinates_never_take_any_visible_dock_control_or_growth_margin(){
+        for count in 1..=5 {
+            for index in 0..count {let rect=dock_rect(count,index).unwrap();
+                assert!(scene_point(count,rect.cx(),rect.y+rect.h/2.0).is_none());
+                assert!(scene_point(count,rect.x-20.0,rect.y-20.0).is_none());
+            }
+            assert_eq!(scene_point(count,plx_ui::consts::SCR_W/2.0,plx_ui::consts::SCR_H/2.0),Some([0.5,0.5]));
+        }
+        assert!(scene_point(4,f32::NAN,0.0).is_none());assert!(scene_point(4,-1.0,0.0).is_none());
+    }
 }

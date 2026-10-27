@@ -106,6 +106,7 @@ extern "C" {
 pub(crate) mod adapters;
 pub(crate) mod boot;
 mod family_home;
+mod family_input;
 pub(crate) mod bootstrap;
 #[cfg(test)]
 pub(crate) use bootstrap::HomeIo;

@@ -767,8 +767,36 @@ unsafe fn ingest_sdl_event(app: &mut App, fr: &mut Frame) {
     ingest_sdl_event_with_window(app, fr, plx_platform::tv::window::grab);
 }
 
-/// The window reacquisition is a platform operation, supplied separately so the
-/// recorded/live ingress boundary can be exercised without an SDL/GL context.
+// The scene relay observes the existing ingress; it owns only explicit background gestures.
+// Dock controls, modal surfaces, D-pad navigation, Back and Exit retain their ordinary owner.
+unsafe fn family_scene_input(app:&mut App,et:u32)->bool{
+    let family=matches!(app.route(),AppArg::FamilyHome{..})&&!app.pages.surface_up()&&app.window_activity.allow_present(true)
+        &&app.player.video_plane_bound&&plx_media::route::is_background(&app.player.session);
+    let Some(home)=app.family_home.as_mut()else{return false;};
+    if !home.controls_enabled(){return false;}
+    if !family||matches!(et,0x103|0x104|SDL_QUIT){home.release_controls();return false;}
+    if matches!(et,SDL_MOUSEMOTION|SDL_MOUSEBUTTONDOWN){
+        let (x,y)=ptr_xy(&app.ev);let on_control=app.pages.input.hit.top_at(x,y).is_some();
+        if (et==SDL_MOUSEMOTION&&app.ptr.dpad_mode)
+            ||(et==SDL_MOUSEBUTTONDOWN&&super::input::click_is_ok(app.ptr.dpad_mode,app.ptr.mot_accum,on_control,super::boot::cursor_is_transparent())){
+            home.release_controls();return false;
+        }
+        home.control_pointer(x,y,on_control);
+        if et==SDL_MOUSEBUTTONDOWN{return home.control_click(true);}
+    }else if et==SDL_MOUSEBUTTONUP{return home.control_click(false);
+    }else if et==SDL_MOUSEWHEEL{
+        let delta=if cfg!(feature="hostsim"){rd_f32(&app.ev,32)}else{rd_i32(&app.ev,20) as f32};
+        return delta!=0.0&&home.control_zoom(delta);
+    }else if et==SDL_KEYDOWN||et==SDL_KEYUP{
+        let (_,_,sym)=decode_key(&app.ev);
+        let key=match sym {119|87=>Some("KeyW"),97|65=>Some("KeyA"),115|83=>Some("KeyS"),100|68=>Some("KeyD"),101|69=>Some("KeyE"),32=>Some("Space"),1073742049=>Some("ShiftLeft"),1073742053=>Some("ShiftRight"),_=>None};
+        if let Some(key)=key{return home.control_key(key,et==SDL_KEYDOWN);}
+        if et==SDL_KEYDOWN{home.release_controls();}
+    }
+    false
+}
+
+/// The window reacquisition is supplied separately for controlled ingress tests.
 unsafe fn ingest_sdl_event_with_window(app: &mut App, fr: &mut Frame,
     restore_window: impl FnOnce(*mut c_void)) {
     let et = rd_u32(&app.ev, 0);
@@ -792,6 +820,7 @@ unsafe fn ingest_sdl_event_with_window(app: &mut App, fr: &mut Frame,
         }
         return;
     }
+    if family_scene_input(app,et){app.last_input=clock::now();return;}
     // INPUT while a popover holds the page frozen is the POPOVER's: every invalidate
     // such an event raises — the one below, and whatever its handler adds — is
     // attributed to it, so the frozen host is not re-rendered on every key-up
