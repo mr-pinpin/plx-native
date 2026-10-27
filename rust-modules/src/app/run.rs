@@ -2724,7 +2724,9 @@ pub(crate) unsafe fn draw(app: &mut App, fr: &mut Frame) -> (i32, i32, i32, i32)
             plx_ui::profile::phase("profile.empty", || {});
             plx_ui::profile::phase("frame.ui", || {
                 plx_ui::guard(|| {
-                    if fr.player {
+                    // Every screen declaring a bound video plane needs the same transparent
+                    // composition. The route alone cannot identify a background-video page.
+                    if fr.player || app.pages.video_plane_frame() {
                         // `plx_platform::tv::window::clear_opaque_region()` used to be called here. It is
                         // §3.3 step 10's privileged call and belongs at the container library's
                         // OWN draw entry, which `app.pages.draw` below reaches in this same frame:

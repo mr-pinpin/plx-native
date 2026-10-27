@@ -130,7 +130,7 @@ impl<H:AppLike> Screen<H> for FamilyHomeScreen {
     fn render_report(&self)->plx_ui::frame::RenderReport{
         self.icons.iter().map(|icon|icon.render_report()).fold(plx_ui::frame::RenderReport::NONE,|mut total,icon|{total.textures+=icon.textures;total.bytes+=icon.bytes;total})
     }
-    fn render(&self)->RenderStrategy{RenderStrategy::Page}
+    fn render(&self)->RenderStrategy{RenderStrategy::VideoPlane}
     fn focus_source(&self)->FocusSource{FocusSource::Engine}
     fn hit_source(&self)->HitSource{HitSource::Engine}
     fn as_any(&self)->Option<&dyn std::any::Any>{Some(self)}
