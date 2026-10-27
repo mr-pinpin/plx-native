@@ -549,3 +549,10 @@ mod tests {
         assert_eq!(rx.recv_timeout(std::time::Duration::from_secs(5)), Ok(7));
     }
 }
+
+/// Monotonic transport time, available only to an off-frame worker. UI decisions use appclock.
+pub fn worker_now(_off: &OffFrame) -> std::time::Instant { std::time::Instant::now() }
+/// UTC observation age is sampled on a worker, never in the replayable frame loop.
+pub fn worker_unix_seconds(_off: &OffFrame) -> Option<u64> {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).ok().map(|d| d.as_secs())
+}

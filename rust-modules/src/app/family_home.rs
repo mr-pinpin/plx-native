@@ -7,7 +7,7 @@ pub(crate) struct Config {version:u32,#[serde(default,rename="pointerShuttle")]p
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ApplicationConfig{id:String,title:String,#[serde(default)] icon:Option<String>,#[serde(default)] scene:Option<String>,#[serde(skip)] pixels:Option<plx_ui::owned_image::Pixels>}
-pub(crate) struct Runtime {config:Config,shuttle:super::family_shuttle::Shuttle,trace_input_at:Option<u32>,trace_action_at:Option<u32>,trace_state_at:Option<u32>,retry_at:u32,status_at:u32,snapshot_at:u32,snapshot:Option<Snapshot>,worker:Option<std::sync::mpsc::Receiver<Option<Snapshot>>>,input:Option<super::family_input::Bridge>,scene_click:bool,scene:Option<super::family_scene::Controller>,managed:Option<Source>,foreground:bool,wake:bool}
+pub(crate) struct Runtime {config:Config,shuttle:super::family_shuttle::Shuttle,trace_input_at:Option<u32>,trace_action_at:Option<u32>,trace_state_at:Option<u32>,retry_at:u32,status_at:u32,snapshot_at:u32,snapshot:Option<Snapshot>,snapshot_requested:u32,worker:Option<std::sync::mpsc::Receiver<(u32,Option<Snapshot>)>>,input:Option<super::family_input::Bridge>,scene_click:bool,scene:Option<super::family_scene::Controller>,managed:Option<Source>,foreground:bool,wake:bool}
 impl Config {
     pub fn load()->Result<Self,String>{
         use std::io::Read;
@@ -29,7 +29,7 @@ impl Config {
 }
 impl Runtime {
     pub fn application(&self,index:u8)->Option<&str>{self.config.apps.get(index as usize).map(|app|app.id.as_str())}
-    pub fn new(mut config:Config)->Self{let scene=config.rendering.take().map(super::family_scene::Controller::new);let input=if config.pointer_shuttle{None}else{config.controls.as_ref().and_then(super::family_input::Bridge::start)};Self{config,shuttle:Default::default(),trace_input_at:None,trace_action_at:None,trace_state_at:None,retry_at:0,status_at:0,snapshot_at:0,snapshot:None,worker:None,input,scene_click:false,scene,managed:None,foreground:false,wake:false}}
+    pub fn new(mut config:Config)->Self{let scene=config.rendering.take().map(super::family_scene::Controller::new);let input=if config.pointer_shuttle{None}else{config.controls.as_ref().and_then(super::family_input::Bridge::start)};Self{config,shuttle:Default::default(),trace_input_at:None,trace_action_at:None,trace_state_at:None,retry_at:0,status_at:0,snapshot_at:0,snapshot:None,snapshot_requested:0,worker:None,input,scene_click:false,scene,managed:None,foreground:false,wake:false}}
     pub fn launch_scene(&mut self,index:u8)->bool{
         let Some(scene)=self.config.apps.get(index as usize).and_then(|app|app.scene.as_deref())else{return false;};
         if let Some(controller)=&mut self.scene{controller.select(scene);true}else{false}
@@ -69,15 +69,14 @@ impl Runtime {
         if now.wrapping_sub(self.status_at)>=u32::MAX/2{return None;}
         self.status_at=now.wrapping_add(1000);
         if let Some(worker)=&self.worker {
-            match worker.try_recv(){Ok(snapshot)=>{self.snapshot=snapshot;self.worker=None;},Err(std::sync::mpsc::TryRecvError::Disconnected)=>{self.worker=None;},Err(std::sync::mpsc::TryRecvError::Empty)=>{}}
+            match worker.try_recv(){Ok((sampled,snapshot))=>{self.snapshot=snapshot;self.snapshot_requested=sampled;self.worker=None;},Err(std::sync::mpsc::TryRecvError::Disconnected)=>{self.worker=None;},Err(std::sync::mpsc::TryRecvError::Empty)=>{}}
         }
         if self.worker.is_none()&&now.wrapping_sub(self.snapshot_at)<u32::MAX/2{
             self.snapshot_at=now.wrapping_add(25000);
             let (send,recv)=std::sync::mpsc::sync_channel(1);
-            if plx_base::task::spawn_small("family status",move||{let _=send.send(read_snapshot());}){self.worker=Some(recv);}
+            if plx_base::task::spawn_off_frame("family status",move|off|{let _=send.send((now,read_snapshot(off)));}){self.worker=Some(recv);}
         }
-        let unix=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).ok()?.as_secs();
-        let network=self.snapshot.as_ref().filter(|snapshot|snapshot.fresh(unix)).map(|snapshot|snapshot.label.clone()).unwrap_or_else(||"—".into());
+        let network=self.snapshot.as_ref().filter(|snapshot|snapshot.frame_fresh(now,self.snapshot_requested)).map(|snapshot|snapshot.label.clone()).unwrap_or_else(||"—".into());
         let reading=plx_platform::wall_clock::read()?;
         let locale=plx_platform::i18n::current();
         let clock=if locale.clock()==plx_platform::i18n::Clock::H12{
@@ -145,13 +144,20 @@ fn load_image(path:&str,max_width:u32,max_height:u32,max_bytes:u64,backdrop:bool
     if backdrop{plx_ui::owned_image::Pixels::backdrop(w.try_into().ok()?,h.try_into().ok()?,rgba)}else{plx_ui::owned_image::Pixels::new(w.try_into().ok()?,h.try_into().ok()?,rgba)}
 }
 
-struct Snapshot {observed:u64,label:String}
-impl Snapshot {fn fresh(&self,now:u64)->bool{self.observed<=now.saturating_add(60)&&now.saturating_sub(self.observed)<=120}}
-fn read_snapshot()->Option<Snapshot>{
+struct Snapshot {observed:u64,label:String,valid_for_ms:u32}
+impl Snapshot {
+    fn fresh(&self,now:u64)->bool{self.observed<=now.saturating_add(60)&&now.saturating_sub(self.observed)<=120}
+    fn validate_age(mut self,unix:u64)->Option<Self>{
+        if !self.fresh(unix){return None;}
+        self.valid_for_ms=(120-unix.saturating_sub(self.observed)).saturating_mul(1000).min(120000) as u32;Some(self)
+    }
+    fn frame_fresh(&self,now:u32,requested:u32)->bool{now.wrapping_sub(requested)<=self.valid_for_ms}
+}
+fn read_snapshot(off:&plx_base::task::OffFrame)->Option<Snapshot>{
     use std::io::Read;
     let mut bytes=Vec::new();std::fs::File::open("/media/internal/pinpin-family/home-status.json").ok()?.take(4097).read_to_end(&mut bytes).ok()?;
     if bytes.len()>4096{return None;}
-    snapshot(&bytes)
+    snapshot(&bytes)?.validate_age(plx_base::task::worker_unix_seconds(off)?)
 }
 fn snapshot(bytes:&[u8])->Option<Snapshot>{
     let value:serde_json::Value=serde_json::from_slice(bytes).ok()?;
@@ -163,11 +169,19 @@ fn snapshot(bytes:&[u8])->Option<Snapshot>{
         "wifi"=>match network["signalBars"].as_u64(){Some(bars@0..=4)=>format!("Wi-Fi · {bars}/4"),_=>"Wi-Fi".into()},
         "ethernet"=>"Ethernet".into(),_=>return None,
     };
-    Some(Snapshot{observed,label})
+    Some(Snapshot{observed,label,valid_for_ms:0})
 }
 #[cfg(test)]
 mod snapshot_tests{
     use super::*;
+    #[test]
+    fn old_observation_keeps_only_remaining_age_and_frame_delay_cannot_refresh_it(){
+        let sample=Snapshot{observed:1000,label:"Wi-Fi".into(),valid_for_ms:0}.validate_age(1119).unwrap();
+        assert!(sample.frame_fresh(499, u32::MAX-500));
+        assert!(!sample.frame_fresh(501, u32::MAX-500));
+        assert!(!sample.frame_fresh(50000, 0));
+        assert!(Snapshot{observed:1000,label:String::new(),valid_for_ms:0}.validate_age(1121).is_none());
+    }
     #[test]
     fn real_provider_contract_is_fresh_only_with_a_valid_observation_and_connection(){
         let bytes=br#"{"schema":1,"observedAtUnix":1000,"network":{"status":"ready","transport":"wifi","connected":true,"internet":true,"signalBars":3},"weather":{"status":"unconfigured","city":null,"temperatureC":null}}"#;

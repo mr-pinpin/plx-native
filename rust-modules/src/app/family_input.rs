@@ -1,6 +1,6 @@
 //! One optional, bounded return channel for native scene input. No scene owns network code.
 use std::sync::{Arc,Condvar,Mutex};
-use std::time::{Duration,Instant};
+use std::time::Duration;
 
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -24,12 +24,12 @@ struct Packet {
 impl Packet {
     fn neutral()->Self{Self{kind:"input",pointer:[0.5,0.5],keys:Vec::new(),activate:false,zoom:0.0,engaged:false}}
 }
-struct Slot {packet:Packet,updated:Instant,generation:u64,stop:bool}
+struct Slot {packet:Packet,updated:u32,generation:u64,stop:bool}
 impl Slot {
-    fn new()->Self{Self{packet:Packet::neutral(),updated:Instant::now(),generation:0,stop:false}}
-    fn touch(&mut self){self.updated=Instant::now();self.generation=self.generation.wrapping_add(1);}
-    fn take(&mut self,now:Instant)->(Packet,u64){
-        if now.saturating_duration_since(self.updated)>Duration::from_millis(750){self.packet=Packet::neutral();}
+    fn new()->Self{Self{packet:Packet::neutral(),updated:super::clock::now(),generation:0,stop:false}}
+    fn touch(&mut self){self.updated=super::clock::now();self.generation=self.generation.wrapping_add(1);}
+    fn take(&mut self,now:u32)->(Packet,u64){
+        if now.wrapping_sub(self.updated)>750{self.packet=Packet::neutral();}
         let packet=self.packet.clone();self.packet.activate=false;self.packet.zoom=0.0;(packet,self.generation)
     }
 }
@@ -44,21 +44,25 @@ impl Bridge {
     pub(super) fn for_test()->Self{Self::with_sender(|_|true).unwrap()}
     fn with_sender(send:impl Fn(&Packet)->bool+Send+'static)->Option<Self>{
         let shared=Arc::new((Mutex::new(Slot::new()),Condvar::new()));let worker=Arc::clone(&shared);
-        plx_base::task::spawn_small("native scene input",move||{
-            let mut last:Option<Packet>=None;let mut next=Instant::now();let mut releasing=false;
+        plx_base::task::spawn_off_frame("native scene input",move|off|{
+            let mut last:Option<Packet>=None;let mut next=plx_base::task::worker_now(off);let mut releasing=false;
+            // Only the worker samples real time; frame-owned freshness uses replay ticks.
+            let mut observed_generation=0;let mut observed_at=next;
             loop {
                 let (packet,generation,stop)={
                     let (lock,wake)=&*worker;let mut slot=lock.lock().unwrap_or_else(|e|e.into_inner());
-                    while !slot.stop&&Instant::now()<next {
-                        let wait=next.saturating_duration_since(Instant::now());
+                    while !slot.stop&&plx_base::task::worker_now(off)<next {
+                        let wait=next.saturating_duration_since(plx_base::task::worker_now(off));
                         slot=wake.wait_timeout(slot,wait).unwrap_or_else(|e|e.into_inner()).0;
                     }
-                    if slot.stop {(Packet::neutral(),slot.generation,true)}else if releasing{(Packet::neutral(),slot.generation,false)}else{let (packet,generation)=slot.take(Instant::now());(packet,generation,false)}
+                    if slot.stop {(Packet::neutral(),slot.generation,true)}else if releasing{(Packet::neutral(),slot.generation,false)}else{if slot.generation!=observed_generation{observed_generation=slot.generation;observed_at=plx_base::task::worker_now(off);}
+                        if plx_base::task::worker_now(off).saturating_duration_since(observed_at)>Duration::from_millis(750){slot.packet=Packet::neutral();}
+                        let updated=slot.updated;let (packet,generation)=slot.take(updated);(packet,generation,false)}
                 };
                 if stop {let _=send(&packet);break;}
                 let changed=last.as_ref()!=Some(&packet);
                 let ok=if changed||packet.engaged||releasing {send(&packet)}else{true};
-                last=Some(packet);releasing=!ok;next=Instant::now()+Duration::from_millis(if ok{50}else{250});
+                last=Some(packet);releasing=!ok;next=plx_base::task::worker_now(off)+Duration::from_millis(if ok{50}else{250});
                 if !ok {
                     let mut slot=worker.0.lock().unwrap_or_else(|e|e.into_inner());
                     if slot.generation==generation {slot.packet=Packet::neutral();}
@@ -74,7 +78,7 @@ impl Bridge {
     pub fn pointer(&self,point:Option<[f32;2]>){self.update(|packet|match point{
         Some(point)=>{packet.pointer=point;packet.engaged=true;},None=>*packet=Packet::neutral(),
     });}
-    pub fn engaged(&self)->bool{let slot=self.shared.0.lock().unwrap_or_else(|e|e.into_inner());slot.packet.engaged&&slot.updated.elapsed()<=Duration::from_millis(750)}
+    pub fn engaged(&self)->bool{let slot=self.shared.0.lock().unwrap_or_else(|e|e.into_inner());slot.packet.engaged&&super::clock::now().wrapping_sub(slot.updated)<=750}
     pub fn activate(&self){self.update(|packet|{if packet.engaged{packet.activate=true;}});}
     pub fn zoom(&self,delta:f32){self.update(|packet|{if packet.engaged&&delta.is_finite(){packet.zoom=(packet.zoom+delta).clamp(-32.0,32.0);}});}
     pub fn key(&self,key:&'static str,down:bool){if !matches!(key,"KeyW"|"KeyA"|"KeyS"|"KeyD"|"KeyE"|"Space"|"ShiftLeft"|"ShiftRight"){return;}self.update(|packet|{
@@ -95,13 +99,19 @@ fn post_packet(url:&str,packet:&Packet)->bool{
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn test_now()->std::time::Instant{plx_base::task::worker_now(&plx_base::task::OffFrame::for_test())}
     #[test]
     fn latest_state_retains_one_shot_edges_and_stale_input_releases_ambient_mode(){
         let mut slot=Slot::new();slot.packet.engaged=true;slot.packet.activate=true;slot.packet.zoom=2.0;
         for x in 0..100 {slot.packet.pointer=[x as f32/100.0,0.25];slot.touch();}
         let (first,_)=slot.take(slot.updated);assert_eq!(first.pointer,[0.99,0.25]);assert!(first.activate);assert_eq!(first.zoom,2.0);
         let (next,_)=slot.take(slot.updated);assert!(!next.activate);assert_eq!(next.zoom,0.0);assert!(next.engaged);
-        slot.packet.keys.push("KeyW");let (expired,_)=slot.take(slot.updated+Duration::from_millis(751));assert!(expired==Packet::neutral());
+        slot.packet.keys.push("KeyW");let (expired,_)=slot.take(slot.updated.wrapping_add(751));assert!(expired==Packet::neutral());
+    }
+    #[test]
+    fn replay_tick_expiry_is_wrap_safe(){
+        let mut slot=Slot::new();slot.updated=u32::MAX-100;slot.packet.engaged=true;
+        assert!(slot.take(649).0.engaged);assert!(!slot.take(650).0.engaged);
     }
     #[test]
     fn private_control_origin_must_match_explicit_background_stream(){
@@ -126,8 +136,8 @@ mod tests {
         bridge.activate();release.send(()).unwrap();
         let latest=seen.recv_timeout(Duration::from_secs(2)).unwrap();assert_eq!(latest.pointer,[0.99,0.25]);assert!(latest.activate);
         drop(bridge);
-        let deadline=Instant::now()+Duration::from_secs(2);
-        loop {let packet=seen.recv_timeout(deadline.saturating_duration_since(Instant::now())).unwrap();if packet==Packet::neutral(){break;}}
+        let deadline=test_now()+Duration::from_secs(2);
+        loop {let packet=seen.recv_timeout(deadline.saturating_duration_since(test_now())).unwrap();if packet==Packet::neutral(){break;}}
     }
     #[test]
     fn production_http_sender_posts_the_wire_packet_and_refuses_redirects_and_oversized_replies(){
@@ -139,9 +149,9 @@ mod tests {
             let listener=std::net::TcpListener::bind(("127.0.0.1",0)).unwrap();
             let address=listener.local_addr().unwrap();listener.set_nonblocking(true).unwrap();
             let server=std::thread::spawn(move||{
-                let deadline=Instant::now()+Duration::from_secs(2);
+                let deadline=test_now()+Duration::from_secs(2);
                 let mut socket=loop{match listener.accept(){Ok((socket,_))=>break socket,Err(error)if error.kind()==std::io::ErrorKind::WouldBlock=>{
-                    assert!(Instant::now()<deadline,"sender never reached loopback fixture");std::thread::sleep(Duration::from_millis(5));},Err(error)=>panic!("{error}")}};
+                    assert!(test_now()<deadline,"sender never reached loopback fixture");std::thread::sleep(Duration::from_millis(5));},Err(error)=>panic!("{error}")}};
                 socket.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
                 let mut bytes=Vec::new();let mut chunk=[0u8;2048];
                 let end=loop{let n=socket.read(&mut chunk).unwrap();assert!(n>0);bytes.extend_from_slice(&chunk[..n]);if let Some(at)=bytes.windows(4).position(|part|part==b"\r\n\r\n"){break at+4;}assert!(bytes.len()<16384);};
@@ -173,8 +183,8 @@ mod tests {
         assert!(seen.recv_timeout(Duration::from_secs(2)).unwrap()==Packet::neutral());
         assert_eq!(seen.recv_timeout(Duration::from_secs(2)).unwrap().pointer,[0.9,0.2]);
         drop(bridge);
-        let deadline=Instant::now()+Duration::from_secs(2);
-        loop{if seen.recv_timeout(deadline.saturating_duration_since(Instant::now())).unwrap()==Packet::neutral(){break;}}
+        let deadline=test_now()+Duration::from_secs(2);
+        loop{if seen.recv_timeout(deadline.saturating_duration_since(test_now())).unwrap()==Packet::neutral(){break;}}
     }
 
 }

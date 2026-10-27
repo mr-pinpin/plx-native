@@ -1,7 +1,6 @@
 //! Foreground ownership of a shared Mini scene. HTTP stays on bounded workers.
 use plx_media::player::background::Source;
 use std::sync::mpsc::{Receiver,TryRecvError};
-use std::time::{Duration,Instant};
 
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -39,11 +38,11 @@ pub(crate) enum Change {Ready(Grant),Passive}
 enum Reply {Start(Option<Grant>),Heartbeat(bool),Stopped}
 pub(crate) struct Controller {
     config:Config,desired:Option<String>,active:Option<Grant>,pending:Option<Receiver<Reply>>,
-    stops:Vec<Grant>,foreground:bool,next:Instant,
+    stops:Vec<Grant>,foreground:bool,next:u32,
 }
 impl Controller {
-    pub fn new(config:Config)->Self{Self{desired:Some(config.scene.clone()),config,active:None,pending:None,stops:Vec::new(),foreground:false,next:Instant::now()}}
-    pub fn select(&mut self,scene:&str){if scene_id(scene){self.desired=Some(scene.into());self.next=Instant::now();}}
+    pub fn new(config:Config)->Self{Self{desired:Some(config.scene.clone()),config,active:None,pending:None,stops:Vec::new(),foreground:false,next:super::clock::now()}}
+    pub fn select(&mut self,scene:&str){if scene_id(scene){self.desired=Some(scene.into());self.next=super::clock::now();}}
     pub fn home(&mut self)->bool{
         if self.desired.as_deref().is_some_and(|scene|scene!=self.config.scene){let scene=self.config.scene.clone();self.select(&scene);true}else{false}
     }
@@ -51,15 +50,15 @@ impl Controller {
     fn accept(&mut self,reply:Reply,foreground:bool)->Option<Change>{
         match reply {
             Reply::Start(Some(grant)) if foreground&&self.desired.as_deref()==Some(grant.scene.as_str())=>{
-                self.retire();self.active=Some(grant.clone());self.next=Instant::now()+Duration::from_secs(10);Some(Change::Ready(grant))
+                self.retire();self.active=Some(grant.clone());self.next=super::clock::now().wrapping_add(10000);Some(Change::Ready(grant))
             },
             Reply::Start(Some(grant))=>{self.stops.push(grant);None},
             Reply::Start(None)|Reply::Heartbeat(false)=>{
-                self.retire();self.next=Instant::now()+Duration::from_secs(5);
+                self.retire();self.next=super::clock::now().wrapping_add(5000);
                 Some(Change::Passive)
             },
             Reply::Heartbeat(true)=>{
-                self.next=Instant::now()+if self.active.as_ref().is_some_and(|grant|self.desired.as_deref()==Some(grant.scene.as_str())){Duration::from_secs(10)}else{Duration::ZERO};None
+                self.next=super::clock::now().wrapping_add(if self.active.as_ref().is_some_and(|grant|self.desired.as_deref()==Some(grant.scene.as_str())){10000}else{0});None
             },
             Reply::Stopped=>None,
         }
@@ -67,7 +66,7 @@ impl Controller {
     pub fn poll(&mut self,foreground:bool)->Option<Change>{
         let mut change=None;
         if !foreground&&self.foreground{self.desired=None;self.retire();change=Some(Change::Passive);}
-        if foreground&&!self.foreground{self.desired=Some(self.config.scene.clone());self.next=Instant::now();}
+        if foreground&&!self.foreground{self.desired=Some(self.config.scene.clone());self.next=super::clock::now();}
         self.foreground=foreground;
         let reply=self.pending.as_ref().and_then(|recv|match recv.try_recv(){Ok(reply)=>Some(reply),Err(TryRecvError::Disconnected)=>Some(Reply::Heartbeat(false)),Err(TryRecvError::Empty)=>None});
         if let Some(reply)=reply {
@@ -76,7 +75,7 @@ impl Controller {
         }
         if self.pending.is_none(){
             if let Some(grant)=self.stops.pop(){self.pending=worker(move||{let _=session_request(&grant,"render.scene.stop");Reply::Stopped});}
-            else if foreground&&Instant::now()>=self.next {
+            else if foreground&&super::clock::now().wrapping_sub(self.next)<u32::MAX/2 {
                 if let Some(scene)=self.desired.clone(){
                     if self.active.as_ref().is_some_and(|grant|grant.scene==scene){
                         let grant=self.active.as_ref().unwrap().clone();self.pending=worker(move||Reply::Heartbeat(session_request(&grant,"render.scene.heartbeat")));
@@ -86,7 +85,7 @@ impl Controller {
         }
         change
     }
-    pub fn failed(&mut self){self.retire();self.next=Instant::now()+Duration::from_secs(5);}
+    pub fn failed(&mut self){self.retire();self.next=super::clock::now().wrapping_add(5000);}
 }
 impl Drop for Controller {fn drop(&mut self){if let Some(grant)=self.active.take(){let _=worker(move||{let _=session_request(&grant,"render.scene.stop");Reply::Stopped});}}}
 fn worker(job:impl FnOnce()->Reply+Send+'static)->Option<Receiver<Reply>>{
@@ -134,9 +133,16 @@ mod tests {
         assert!(controller.active.is_none());assert_eq!(controller.stops.len(),2);
     }
     #[test]
+    fn retry_deadline_uses_replay_time_and_wraps(){
+        super::super::clock::set_replay(u32::MAX-2000);
+        let mut controller=controller();controller.failed();assert_eq!(controller.next,2999);
+        super::super::clock::set_replay(3000);controller.select("atlas");assert_eq!(controller.next,3000);
+        super::super::clock::set_replay(0);
+    }
+    #[test]
     fn scene_change_during_heartbeat_survives_old_failure_and_can_return_home(){
         let mut controller=controller();controller.active=Some(grant("forest"));controller.select("atlas");
-        controller.accept(Reply::Heartbeat(true),true);assert!(controller.next<=Instant::now());
+        controller.accept(Reply::Heartbeat(true),true);assert!(controller.next<=super::clock::now());
         assert!(matches!(controller.accept(Reply::Heartbeat(false),true),Some(Change::Passive)));
         assert!(controller.active.is_none());assert_eq!(controller.desired.as_deref(),Some("atlas"));assert_eq!(controller.stops.len(),1);
         assert!(controller.home());assert!(!controller.home());
