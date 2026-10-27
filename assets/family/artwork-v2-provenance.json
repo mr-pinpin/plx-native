@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "createdAt": "2026-10-27",
+  "assets": [
+    {
+      "output": "cinema/cinema-kids-icon-master-v2.png",
+      "sha256": "19c4f9f9ff1c6cf8f980a12b4235d61c7f7b4b42484e6ccf1446d2e4b1ecd315",
+      "tool": "built-in image_gen",
+      "intent": "edit",
+      "prompt": "Use case: precise-object-edit. Edit target Image1 is the existing Cinema Kids app icon. Preserve its polished warm 3D hedgehog design, older child Mr PinPin identity, navy background and red-white popcorn bucket. Add ONE clearly smaller baby brother Mr PomPom beside PinPin, both enjoying popcorn together. Image2 is ONLY baby identity reference (sprite sheet): use a SINGLE baby hedgehog with round compact baby proportions, cream face and brown quills, no sprite grid, no red artefacts. Exactly TWO children, one older and one much smaller baby; no adults. Friendly expressive faces, anatomically correct two front paws each; no extra arms. Square icon composition, subjects large and clearly distinct at small TV dock size. No text, no border, no watermark. Preserve original style and palette.",
+      "references": [
+        {
+          "role": "edit target",
+          "name": "cinema-icon-master-v1.png",
+          "sha256": "1ebe93ba1d0478eb3ab688541c5835abab8ce1adba8b5fb471e5d3167c137aee"
+        },
+        {
+          "role": "baby identity only",
+          "name": "mr-pompom-a-v1.png",
+          "sha256": "611f2a203382376e30b34e53ebf7512a84c2bdb4f3e41f5b48f839ac4678706a"
+        }
+      ]
+    },
+    {
+      "output": "family/book-family-icon-master-v2.png",
+      "sha256": "e436c0856001429b05c94e21234eec8adeae02c2ff3cc0c82abfc8ce26e9d62f",
+      "tool": "built-in image_gen",
+      "intent": "edit",
+      "prompt": "Use case: precise-object-edit. Image1 edit target is existing family book app icon: keep its polished warm 3D hedgehog character identities and forest-bokeh style. Recompose as exactly FOUR family members reading ONE normal-sized open storybook together: Mama and Papa (two larger adults), older child Mr PinPin, and much smaller baby brother Mr PomPom. All four faces clearly visible and distinct, looking lovingly down at the book held in their paws at chest/lap height. Image2 is ONLY baby Mr PomPom identity reference (sprite sheet): use a SINGLE small round cream-faced baby with brown quills, no repeated sprites or red artefacts. The baby must not be omitted or confused with older brother. Book is being read/held, never a giant book lying on the ground. Intimate close square composition readable at small TV dock size, warm cinematic lighting, green forest background. Preserve original family identities. Anatomically correct paws with no extra limbs. No text, no border, no watermark.",
+      "references": [
+        {
+          "role": "edit target",
+          "name": "mrpompom-family-icon-master-v1.png",
+          "sha256": "8f033bfaaf0c8f5b702157fe2aa2fc6bbc8bc74f7261111d13dfbf8a02524dd7"
+        },
+        {
+          "role": "baby identity only",
+          "name": "mr-pompom-a-v1.png",
+          "sha256": "611f2a203382376e30b34e53ebf7512a84c2bdb4f3e41f5b48f839ac4678706a"
+        }
+      ]
+    }
+  ],
+  "notes": "Masters are unmodified tool outputs. Baby identity verified from existing production atlas; no literal Chapter 1400 was found. Reference artwork remains private/excluded. PNG exports use resizing only."
+}
