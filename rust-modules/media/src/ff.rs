@@ -3799,8 +3799,8 @@ fn annexb_start(data: &[u8], from: usize) -> Option<(usize, usize)> {
 }
 
 /// Validate an MPEG-TS H.264 packet as Annex-B, retain its in-band SPS/PPS and prepend whichever
-/// set is missing on an IDR. The progressive demuxer cannot be reused here: it interprets the
-/// first `00 00 00 01` as an AVCC length of one and corrupts the access unit.
+/// set is missing on an IDR. Shared by TS segments and progressive Annex-B demux:
+/// AVCC conversion would interpret `00 00 00 01` as a length-one NAL and truncate the AU.
 fn ts_h264_access_unit(
     data: &[u8],
     params: &mut H264ParamSets,
@@ -3863,6 +3863,19 @@ fn ts_h264_access_unit(
     }
     out.extend_from_slice(data);
     Ok(is_key)
+}
+
+/// Codec parameters, not ambiguous packet bytes, select H.264 framing. Empty
+/// extradata is the elementary/TS case; avcC always starts with version one.
+fn h264_annexb_extradata(data: &[u8]) -> bool {
+    data.is_empty() || annexb_start(data, 0).is_some_and(|(first, _)| first == 0)
+}
+unsafe fn progressive_h264_access_unit(
+    data: &[u8], annexb: bool, nls: usize, params: &[u8],
+    sets: &mut H264ParamSets, out: &mut Vec<u8>,
+) -> Result<bool, &'static str> {
+    if annexb { ts_h264_access_unit(data, sets, out) }
+    else { Ok(packet_to_annexb(data.as_ptr(), data.len(), nls, false, false, params, out)) }
 }
 
 fn packet_has_adts(data: &[u8]) -> bool {
@@ -9195,6 +9208,12 @@ pub fn demux_cached(
                 } else {
                     std::slice::from_raw_parts((*vcp).extradata, (*vcp).extradata_size as usize)
                 };
+                let h264_annexb = !is_av1 && !is_vp9 && !is_hevc && h264_annexb_extradata(av1_ed);
+                let mut h264_sets = H264ParamSets::default();
+                if h264_annexb {
+                    if !av1_ed.is_empty() { let _ = ts_h264_access_unit(av1_ed, &mut h264_sets, &mut Vec::new()); }
+                    crate::player::log(&format!("ff: progressive H264 Annex-B cached parameter sets={}B", h264_sets.sps.len()+h264_sets.pps.len()));
+                }
                 let av1_cfg = if is_av1 { parse_av1c(av1_ed) } else { Vec::new() };
                 let av1_framing = if is_av1 {
                     Av1Framing::from_trigger(plx_base::devtrig::read("av1obu").as_deref())
@@ -9345,6 +9364,18 @@ pub fn demux_cached(
                                 std::slice::from_raw_parts((*pkt).data, (*pkt).size.max(0) as usize)
                             };
                             vp9_packet_to_frame(pkt_bytes, (*pkt).flags & AV_PKT_FLAG_KEY != 0, &mut aubuf)
+                        } else if !is_hevc {
+                            let data = if (*pkt).data.is_null() { &[] } else {
+                                std::slice::from_raw_parts((*pkt).data, (*pkt).size.max(0) as usize)
+                            };
+                            match progressive_h264_access_unit(data, h264_annexb, nal_len_size, &param_blob, &mut h264_sets, &mut aubuf) {
+                                Ok(key) => key,
+                                Err(reason) => {
+                                    crate::player::log(&format!("ff: rejected progressive H264 AU: {reason}"));
+                                    av_packet_unref(pkt);
+                                    continue;
+                                }
+                            }
                         } else {
                             packet_to_annexb(
                                 (*pkt).data,
