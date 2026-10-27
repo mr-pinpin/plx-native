@@ -19,6 +19,8 @@ pub const SHAPE:&str="FamilyHomeV1{entry:u32,idle_ms:u32,alpha:{pos:f32,vel:f32}
 const TILE_W: f32 = 192.0;
 const TILE_H: f32 = 192.0;
 const BOTTOM_INSET: f32 = 96.0;
+// Keep the dock material at half its prior opacity while artwork remains fully opaque.
+const DOCK_MATERIAL_ALPHA: f32 = 0.5;
 const GROUP: GroupId = GroupId(0);
 
 pub struct FamilyHomeScreen {
@@ -116,17 +118,16 @@ impl<H:AppLike> Screen<H> for FamilyHomeScreen {
             plx_ui::label::Label::new(date.as_ptr(),theme::size::BODY,theme::TEXT_SECONDARY).h(plx_ui::label::HAlign::Right).draw(p,Rect::new(plx_ui::consts::SCR_W-580.0,56.0,500.0,48.0));
         }
         if let (Some(first),Some(last))=(self.rect(0),self.rect(self.apps.len().saturating_sub(1))){
-            p.rrect_sheened(Rect::new(first.x-24.0,first.y-24.0,last.x+last.w-first.x+48.0,TILE_H+48.0),32.0,theme::MENU_GLASS_BOT);
+            p.alpha(DOCK_MATERIAL_ALPHA).rrect_sheened(Rect::new(first.x-24.0,first.y-24.0,last.x+last.w-first.x+48.0,TILE_H+48.0),32.0,theme::MENU_GLASS_BOT);
         }
-        for (i,app) in self.apps.iter().enumerate(){
-            let Some(rect)=self.rect(i)else{continue};let Ok(label)=CString::new(app.title.as_str())else{continue};
+        for i in 0..self.apps.len(){
+            let Some(rect)=self.rect(i)else{continue};
             let focused=f.cx.focus.current.is_some_and(|k|k==self.key(i));
             if self.icons[i].ready(){
                 let popped=rect.scaled(self.pop.scale(i));
                 self.icons[i].draw(p,popped,32.0);
-                if focused {plx_ui::label::Label::new(label.as_ptr(),theme::size::BODY,theme::TEXT_PRIMARY).h(plx_ui::label::HAlign::Center).draw(p,Rect::new(rect.x-80.0,rect.y-64.0,rect.w+160.0,48.0));}
             }else{
-                Button::new(label.as_ptr(),theme::size::BODY,rect).focused(focused).ground(ControlGround::Unkeyed)
+                Button::new(c"".as_ptr(),theme::size::BODY,rect).focused(focused).ground(ControlGround::Unkeyed)
                     .scale(self.pop.scale(i)).draw(&Env::inert(),p);
             }
             f.stop(p,Stop{key:self.key(i),rect,rest_rect:rect,clip:Rect::FULL,hover:Hover::Focus,activate:Activate::Press});
@@ -189,5 +190,27 @@ mod resume_tests {
         assert_eq!(screen.alpha.pos,1.0);
         for tick in 0..1200 {screen.step(&ScreenEvent::Tick(Tick{ms:60000+tick*100,dt_us:100000}),&cx,&mut fx);}
         assert_eq!(screen.alpha.pos,1.0,"the launcher menu must remain visible at all times");
+    }
+}
+
+#[cfg(test)]
+mod dock_presentation_tests {
+    use super::*;
+    use crate::family::InnerHost;
+    use plx_machine::machine::{Tick,FocusRead,PressRead,InputOwner};
+    #[test]
+    fn three_icon_dock_has_no_app_labels_and_keeps_three_centered_click_targets(){
+        let _serial=plx_base::testlock::serial();
+        let apps=["Cinema Kids","Cinema Parents","Book"].into_iter().enumerate().map(|(i,title)|Application{id:format!("com.example.app{i}"),title:title.into(),icon:None}).collect();
+        let mut screen=FamilyHomeScreen::new(EntryId(1),apps);
+        let measure=plx_ui::fixture::FixtureMeasure;
+        let cx=Cx::<InnerHost>{views:plx_data::stores::browse::DirectoryView::empty_for_test(),tick:Tick::default(),measure:&measure,press:PressRead::default(),focus:FocusRead{current:Some(screen.key(0)),..Default::default()},owner:InputOwner::Entry(EntryId(1))};
+        let mut frame=DrawFrame::new(&cx,plx_ui::Painter::recording());
+        let text=plx_ui::draw_census::capture_text(||plx_ui::screen::record_stops_while_recording(||Screen::<InnerHost>::draw(&mut screen,&mut frame)));
+        assert!(text.iter().all(|(label,_)|label.is_empty()),"even focused or not-yet-uploaded app artwork must not produce labels: {text:?}");
+        let stops=frame.stops();assert_eq!(stops.len(),3);
+        assert_eq!(stops.iter().map(|s|s.key.elem).collect::<Vec<_>>(),vec![0,1,2]);
+        let left=stops[0].rect.x;let right=stops[2].rect.x+stops[2].rect.w;
+        assert!(((left+right)/2.0-plx_ui::consts::SCR_W/2.0).abs()<0.01,"three configured apps stay centered");
     }
 }
