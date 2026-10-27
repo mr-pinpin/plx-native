@@ -55,7 +55,7 @@ impl<H: AppLike> Machine<H> for FamilyHomeScreen {
     fn step(&mut self, ev: &Self::Ev, cx: &Cx<'_,H>, fx: &mut Effects<'_,H>) -> Handled {
         match ev {
             ScreenEvent::Tick(t) => {
-                self.idle_ms = self.idle_ms.saturating_add(t.ms);
+                self.idle_ms = self.idle_ms.saturating_add(t.dt_us / 1000);
                 let old = self.alpha.pos;
                 self.alpha.step(if self.idle_ms < IDLE_MS {1.0}else{0.0},plx_ui::consts::K_SCALE,t.dt());
                 self.pop.step(cx.focus.current.filter(|k|k.entry==self.entry).map(|k|k.elem as usize),t.dt());
