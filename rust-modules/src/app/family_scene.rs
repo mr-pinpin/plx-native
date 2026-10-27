@@ -83,12 +83,13 @@ impl Controller {
                         self.next=now.wrapping_add(if self.active.as_ref().is_some_and(|grant|self.desired.as_deref()==Some(grant.scene.as_str())){10000}else{0});None
                     },
                     Heartbeat::Transient=>{
-                        // The manager's verified TTL is 30s; normal HB is 10s. A bounded retry
-                        // preserves healthy media through one lost control packet, never indefinitely.
+                        // A request can renew the manager's 30s lease even when its ACK times out.
+                        // Keep retrying within a bounded 15s grace (normal HB10s + request1s
+                        // + grace15s stays below TTL), rather than retiring on a miss count.
                         self.heartbeat_misses=self.heartbeat_misses.saturating_add(1);
                         plx_base::eventlog::log(&format!("family scene heartbeat: transient miss={}",self.heartbeat_misses));
                         let since=*self.heartbeat_since.get_or_insert(now);
-                        if self.heartbeat_misses>=3||now.wrapping_sub(since)>=5000 {
+                        if now.wrapping_sub(since)>=15000 {
                             plx_base::eventlog::log("family scene heartbeat: retry grace exhausted; yielding Home");self.failed();Some(Change::Passive)
                         }else{
                             self.next=now.wrapping_add(if self.active.as_ref().is_some_and(|grant|self.desired.as_deref()==Some(grant.scene.as_str())){1000}else{0});None
@@ -210,18 +211,36 @@ mod tests {
         super::super::clock::set_replay(0);
     }
     #[test]
-    fn repeated_timeouts_or_elapsed_grace_yield_home_once(){
-        let _serial=plx_base::testlock::serial();
+    fn three_lost_acknowledgements_within_grace_preserve_video_and_recovery_resets_it(){
+        super::super::clock::set_replay(100);
         let mut c=controller();c.select("atlas");c.active=Some(grant("atlas"));
-        for _ in 0..2{assert!(c.accept(Reply::Heartbeat(Heartbeat::Transient),true).is_none());}
-        assert!(matches!(c.accept(Reply::Heartbeat(Heartbeat::Transient),true),Some(Change::Passive)));
-        assert_eq!(c.desired.as_deref(),Some("forest"));assert_eq!(c.stops.len(),1);
-        assert!(c.accept(Reply::Heartbeat(Heartbeat::Fatal),true).is_none());assert_eq!(c.stops.len(),1);
+        for at in [100,2100,4100]{
+            super::super::clock::set_replay(at);
+            assert!(c.accept(Reply::Heartbeat(Heartbeat::Transient),true).is_none());
+            assert!(c.active.is_some());assert_eq!(c.desired.as_deref(),Some("atlas"));assert!(c.stops.is_empty());
+        }
+        assert_eq!(c.heartbeat_misses,3);
+        assert!(c.accept(Reply::Heartbeat(Heartbeat::Healthy),true).is_none());
+        assert_eq!(c.heartbeat_since,None);assert_eq!(c.heartbeat_misses,0);
+        super::super::clock::set_replay(20000);
+        assert!(c.accept(Reply::Heartbeat(Heartbeat::Transient),true).is_none());
+        assert_eq!(c.heartbeat_since,Some(20000));
+        super::super::clock::set_replay(0);
+    }
+    #[test]
+    fn elapsed_fifteen_second_grace_yields_home_once_and_fatal_is_immediate(){
         super::super::clock::set_replay(u32::MAX-2000);
         let mut c=controller();c.select("atlas");c.active=Some(grant("atlas"));
         assert!(c.accept(Reply::Heartbeat(Heartbeat::Transient),true).is_none());
-        super::super::clock::set_replay(3000);
+        super::super::clock::set_replay(12998);
+        assert!(c.accept(Reply::Heartbeat(Heartbeat::Transient),true).is_none());
+        super::super::clock::set_replay(12999);
         assert!(matches!(c.accept(Reply::Heartbeat(Heartbeat::Transient),true),Some(Change::Passive)));
+        assert_eq!(c.desired.as_deref(),Some("forest"));assert_eq!(c.stops.len(),1);
+        assert!(c.accept(Reply::Heartbeat(Heartbeat::Transient),true).is_none());assert_eq!(c.stops.len(),1);
+        let mut c=controller();c.select("atlas");c.active=Some(grant("atlas"));
+        assert!(matches!(c.accept(Reply::Heartbeat(Heartbeat::Fatal),true),Some(Change::Passive)));
+        assert_eq!(c.desired.as_deref(),Some("forest"));
         super::super::clock::set_replay(0);
     }
     #[test]
