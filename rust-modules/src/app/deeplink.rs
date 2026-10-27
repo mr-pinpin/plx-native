@@ -418,10 +418,12 @@ pub(crate) fn frame(
     foreground: bool,
     session_stands: bool,
     now: u32,
-) {
+) -> bool {
     let (event, env) = link_inputs(pages, foreground, session_stands, now);
+    let ordinary=matches!(event,LinkEvent::Arrived(Parsed::None));
     let out = link.step(event, &env);
     perform(out, pages, menu_play_await, now);
+    ordinary
 }
 
 #[cfg(test)]

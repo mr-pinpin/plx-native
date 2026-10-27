@@ -1719,6 +1719,9 @@ fn did_foreground_with_link(app: &mut App) -> ForegroundActivation {
     let stands = link_session_stands(app);
     let (event, env) = super::deeplink::link_inputs(
         &app.pages, app.window_activity.allow_present(true), stands, now);
+    if matches!(event,super::deeplink::LinkEvent::Arrived(super::deeplink::Parsed::None)) {
+        if let Some(home)=app.family_home.as_mut(){home.home_scene();}
+    }
     let out = app.deeplink.step(event, &env);
     let input = if out.leaves_playback {
         ForegroundInput::DidForegroundSuperseded
@@ -1784,7 +1787,8 @@ pub(crate) unsafe fn playback_tick(app: &mut App, fr: &mut Frame) {
                         plx_ui::screen::ScreenEvent::App(plx_screens::registry::AppMsg::FamilyStatus(status)))));
             }
         }
-        if playback_may_run(app) { if let Some(home)=app.family_home.as_mut() { home.tick(&mut app.player.session,&mut app.adapters.player,fr.now); } }
+        let family_foreground=playback_may_run(app);
+        if let Some(home)=app.family_home.as_mut() { home.tick(&mut app.player.session,&mut app.adapters.player,fr.now,family_foreground); }
         if playback_may_run(app) {
             if is_started() {
                 plx_media::player::pump(&mut app.player.session, &mut app.adapters.player, fr.now);
@@ -2309,12 +2313,16 @@ pub(super) fn reduce_navigation_request(request: plx_screens::registry::LoopReq,
 
 fn loop_requests(app: &mut App) {
     for req in app.bridge.take_reqs() {
+        // A scene is a child of Family Home. Its root Back uses the same tree-owned
+        // intent; only the application owner decides whether a scene remains to leave.
+        if matches!(req,plx_screens::registry::LoopReq::BackAtRoot)
+            &&app.family_home.as_mut().is_some_and(|home|home.home_scene()){continue;}
         let req = match reduce_navigation_request(req, &mut app.pages) {
             Ok(()) => continue,
             Err(req) => req,
         };
         match req {
-            plx_screens::registry::LoopReq::FamilyLaunch(index) => { if let Some(id)=app.family_home.as_ref().and_then(|home|home.application(index)) { plx_platform::tv::launch::application(id); } },
+            plx_screens::registry::LoopReq::FamilyLaunch(index) => { if !app.family_home.as_mut().is_some_and(|home|home.launch_scene(index)) { if let Some(id)=app.family_home.as_ref().and_then(|home|home.application(index)) { plx_platform::tv::launch::application(id); } } },
             // BACK at a root the platform owns. The FIRST consent stage is the fourth such root
             // and the one the 2026-09-03 rule could not reach until this phase — see the key
             // ladder's dispatcher arm for why a `Popover` could not tell the two BACKs apart.
@@ -2595,8 +2603,10 @@ pub(crate) unsafe fn update(app: &mut App, fr: &mut Frame) {
         // failure, or the ceiling) says the wait is over. A title the launch asked for
         // (`deeplink`) arms the same wait once Home is up.
         let stands = link_session_stands(app);
-        super::deeplink::frame(&mut app.pages, &mut app.deeplink, &mut app.menu_play_await,
-            app.window_activity.allow_present(true), stands, fr.now);
+        if super::deeplink::frame(&mut app.pages, &mut app.deeplink, &mut app.menu_play_await,
+            app.window_activity.allow_present(true), stands, fr.now) {
+            if let Some(home)=app.family_home.as_mut(){home.home_scene();}
+        }
         if app.menu_play_await.is_some() {
             menu_play_tick(&mut app.player.session, &mut app.adapters.player,
                 &mut app.pages, &mut app.bridge, &mut app.menu_play_await, fr.now);

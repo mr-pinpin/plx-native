@@ -3,11 +3,11 @@ use plx_media::player::background::Source;
 use plx_screens::family_home::Application;
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct Config {version:u32,pub background:Option<Source>,apps:Vec<ApplicationConfig>,#[serde(default)] controls:Option<super::family_input::Config>}
+pub(crate) struct Config {version:u32,pub background:Option<Source>,apps:Vec<ApplicationConfig>,#[serde(default)] controls:Option<super::family_input::Config>,#[serde(default)] rendering:Option<super::family_scene::Config>}
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
-struct ApplicationConfig{id:String,title:String,#[serde(default)] icon:Option<String>,#[serde(skip)] pixels:Option<plx_ui::owned_image::Pixels>}
-pub(crate) struct Runtime {config:Config,retry_at:u32,status_at:u32,snapshot_at:u32,snapshot:Option<Snapshot>,worker:Option<std::sync::mpsc::Receiver<Option<Snapshot>>>,input:Option<super::family_input::Bridge>,scene_click:bool}
+struct ApplicationConfig{id:String,title:String,#[serde(default)] icon:Option<String>,#[serde(default)] scene:Option<String>,#[serde(skip)] pixels:Option<plx_ui::owned_image::Pixels>}
+pub(crate) struct Runtime {config:Config,retry_at:u32,status_at:u32,snapshot_at:u32,snapshot:Option<Snapshot>,worker:Option<std::sync::mpsc::Receiver<Option<Snapshot>>>,input:Option<super::family_input::Bridge>,scene_click:bool,scene:Option<super::family_scene::Controller>,managed:Option<Source>}
 impl Config {
     pub fn load()->Result<Self,String>{
         use std::io::Read;
@@ -16,20 +16,25 @@ impl Config {
         let mut bytes=Vec::new();file.take(32769).read_to_end(&mut bytes).map_err(|_|"family configuration unreadable")?;
         if bytes.len()>32768{return Err("family configuration oversized".into());}
         let mut config:Self=serde_json::from_slice(&bytes).map_err(|_|"family configuration invalid")?;
-        if config.version!=1||!(1..=5).contains(&config.apps.len())||config.apps.iter().map(|app|&app.id).collect::<std::collections::BTreeSet<_>>().len()!=config.apps.len()||config.apps.iter().any(|app|app.id.is_empty()||app.id.len()>128
+        if config.rendering.as_ref().is_some_and(|rendering|!rendering.valid())||config.version!=1||!(1..=5).contains(&config.apps.len())||config.apps.iter().map(|app|&app.id).collect::<std::collections::BTreeSet<_>>().len()!=config.apps.len()||config.apps.iter().any(|app|app.id.is_empty()||app.id.len()>128
             ||!app.id.bytes().all(|c|c.is_ascii_alphanumeric()||c==b'.'||c==b'-'||c==b'_')||app.title.is_empty()||app.title.len()>80
-            ||app.title.chars().any(char::is_control))||config.background.as_ref().is_some_and(|source|!source.valid())||config.controls.as_ref().is_some_and(|controls|!controls.valid(config.background.as_ref().map(|source|source.url.as_str()))){
+            ||app.title.chars().any(char::is_control)||app.scene.as_ref().is_some_and(|scene|!super::family_scene::scene_id(scene)||config.rendering.is_none()))||config.background.as_ref().is_some_and(|source|!source.valid())||config.controls.as_ref().is_some_and(|controls|!controls.valid(config.background.as_ref().map(|source|source.url.as_str()))){
             return Err("family configuration rejected".into());
         }
         for app in &mut config.apps { app.pixels=app.icon.as_deref().and_then(load_icon); }
         Ok(config)
     }
     pub fn applications(&self)->Vec<Application>{self.apps.iter().map(|app|Application{id:app.id.clone(),title:app.title.clone(),icon:app.pixels.clone()}).collect()}
-    pub fn empty()->Self{Self{version:1,background:None,apps:Vec::new(),controls:None}}
+    pub fn empty()->Self{Self{version:1,background:None,apps:Vec::new(),controls:None,rendering:None}}
 }
 impl Runtime {
     pub fn application(&self,index:u8)->Option<&str>{self.config.apps.get(index as usize).map(|app|app.id.as_str())}
-    pub fn new(config:Config)->Self{let input=config.controls.as_ref().and_then(super::family_input::Bridge::start);Self{config,retry_at:0,status_at:0,snapshot_at:0,snapshot:None,worker:None,input,scene_click:false}}
+    pub fn new(mut config:Config)->Self{let scene=config.rendering.take().map(super::family_scene::Controller::new);let input=config.controls.as_ref().and_then(super::family_input::Bridge::start);Self{config,retry_at:0,status_at:0,snapshot_at:0,snapshot:None,worker:None,input,scene_click:false,scene,managed:None}}
+    pub fn launch_scene(&mut self,index:u8)->bool{
+        let Some(scene)=self.config.apps.get(index as usize).and_then(|app|app.scene.as_deref())else{return false;};
+        if let Some(controller)=&mut self.scene{controller.select(scene);true}else{false}
+    }
+    pub fn home_scene(&mut self)->bool{self.scene.as_mut().is_some_and(super::family_scene::Controller::home)}
     pub fn release_controls(&mut self){self.scene_click=false;if let Some(input)=&self.input{input.release();}}
     pub fn controls_enabled(&self)->bool{self.input.is_some()}
     pub fn control_pointer(&mut self,x:f32,y:f32,on_control:bool){
@@ -62,14 +67,31 @@ impl Runtime {
         }else{format!("{:02}:{:02}",reading.hour,reading.minute)};
         Some(plx_screens::family_home::Status{clock,date:locale.date(reading.year,reading.month,reading.day).unwrap_or_default(),network})
     }
-    pub fn tick(&mut self,ps:&mut plx_media::route::PlaybackSession,pa:&mut plx_media::player::adapter::PlayerAdapter,now:u32){
+    pub fn tick(&mut self,ps:&mut plx_media::route::PlaybackSession,pa:&mut plx_media::player::adapter::PlayerAdapter,now:u32,foreground:bool){
+        if let Some(change)=self.scene.as_mut().and_then(|scene|scene.poll(foreground)){
+            self.release_controls();
+            if plx_media::route::is_background(ps)&&pa.is_live(){plx_media::player::stop_bufferfeed(ps,pa);}
+            match change {super::family_scene::Change::Ready(grant)=>{self.managed=Some(grant.source());self.input=grant.input().as_ref().and_then(super::family_input::Bridge::start);},super::family_scene::Change::Passive=>{self.managed=None;self.input=self.config.controls.as_ref().and_then(super::family_input::Bridge::start);}}
+            self.retry_at=now;
+        }
+        if !foreground{return;}
+        if self.managed.is_some()&&pa.is_live()&&plx_media::player::ended(){
+            if let Some(scene)=&mut self.scene{scene.failed();}
+            self.release_controls();self.managed=None;self.input=None;
+            if pa.is_live(){plx_media::player::stop_bufferfeed(ps,pa);}
+            self.retry_at=now;
+        }
         if self.input.is_some()&&(!pa.is_live()||!plx_media::route::is_background(ps)||plx_media::player::ended()){self.release_controls();}
-        let Some(source)=&self.config.background else{return;};
+        let Some(source)=self.managed.as_ref().or(self.config.background.as_ref()) else{return;};
         if plx_media::player::ended()&&plx_media::route::is_background(ps)&&source.looping{
             plx_media::player::stop_bufferfeed(ps,pa);
         }
         if !pa.is_live()&&now.wrapping_sub(self.retry_at)<u32::MAX/2{
-            let _=plx_media::player::background::start(ps,pa,source);
+            let started=plx_media::player::background::start(ps,pa,source);
+            if !started&&self.managed.is_some(){
+                if let Some(scene)=&mut self.scene{scene.failed();}
+                self.release_controls();self.managed=None;self.input=None;
+            }
             self.retry_at=now.wrapping_add(5000);
         }
     }
@@ -123,7 +145,7 @@ mod control_tests{
     use super::*;
     #[test]
     fn a_new_dock_press_cannot_lose_its_release_after_a_missing_scene_button_up(){
-        let mut config=Config::empty();config.apps.push(ApplicationConfig{id:"example".into(),title:"Example".into(),icon:None,pixels:None});
+        let mut config=Config::empty();config.apps.push(ApplicationConfig{id:"example".into(),title:"Example".into(),icon:None,scene:None,pixels:None});
         let mut runtime=Runtime::new(config);runtime.input=Some(super::super::family_input::Bridge::for_test());
         runtime.control_pointer(100.0,100.0,false);assert!(runtime.control_click(true));
         // The old scene's button-up was lost. A new dock gesture owns both of its edges.

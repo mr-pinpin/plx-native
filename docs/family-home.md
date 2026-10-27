@@ -46,3 +46,19 @@ One bounded worker sends the shared `kind: input` envelope using the existing HT
 Native pointer positions are normalized to the video canvas. Steering requires an actual bound background video plane; stopped or ended playback releases the return channel. Dock controls and their magnification margin are excluded, as are modal surfaces; the existing D-pad/pointer handoff and remote OK synthesis stay authoritative. Scene clicks and wheel zoom apply only outside those controls. Keyboard WASD, E, Space and Shift can be relayed while the scene pointer is engaged; D-pad navigation, Back and Exit remain ordinary launcher input.
 
 `engaged: true` means intentional scene steering, including an explicit centered pointer that holds the scene. `engaged: false` releases steering so the shared producer returns to its ambient forward policy. Idle expiry, backgrounding, failed transport and shutdown release steering. The same return channel serves forest, Atlas and other scenes; none adds its own transport. Native live-stream compatibility and the actual TV return path still require device verification before changing a household's working passive configuration.
+
+## Shared Mini scenes
+
+A private optional `rendering` object supplies `queryURL` and a registry `scene`
+(default `forest`). An app entry can additionally declare `scene: "atlas"` or
+`"alambique"`; its ordinary installed app id remains available when rendering is
+not configured. The controller uses the shared HTTP transport on bounded workers,
+keeps passive media until a ready grant arrives, validates grant origins, and
+heartbeats only while foreground. Root Back and an ordinary Home relaunch return
+to the configured default. Backgrounding retires the grant; late replies are
+stopped rather than displayed. The Mini's expiry remains authoritative if the TV
+process disappears before cleanup can run. No scene supplies commands or URLs.
+
+A host test establishes controller ordering, not native receipt of a live scene.
+Verify the actual TV's decoded frames and returned pointer controls before
+claiming an interactive scene has been delivered.
