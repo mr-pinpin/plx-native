@@ -39,6 +39,22 @@ The existing resident may mirror its `home.status` observation to `/media/intern
 
 Background declarations must describe the actual video: supported H.264/HEVC codec, source dimensions and source frame rate. The initial H.264 bound is 30 fps; HEVC is accepted up to 60 fps. No higher-rate source is relabelled to satisfy these bounds. This is video-only playback, with no invented audio stream, Plex watch identity, queue or timeline reporting. A verified local looping VOD seeks to the beginning four seconds before the end, retaining its existing decoder and video plane instead of stopping and loading again. This avoids the normal EOS unbind/rebind transition. Pending seeks and an active pointer gesture retain priority; nonlocal streams keep their existing EOS restart. This does not spend the trailer preview seek budget.
 
+The separate default-off `pointerDirectionVideo: true` selects a continuous-play
+experiment for a specifically prepared local asset: 120 seconds forward, the
+same 3600 frames in reverse order, then four seconds of priming padding (244
+seconds at 30 fps). It takes priority over the older shuttle and requires the
+actual verified-local decoder; managed scenes retain their own controls. Normal
+native Play runs uninterrupted between direction changes. Accumulated horizontal
+cursor displacement of 0.005 normalized units selects left/reverse or right/forward,
+rather than selecting by cursor position on the screen. Small alternating jitter
+is filtered; vertical movement keeps the last direction. A real sign change
+requests one mirrored seek using the current landed PTS. Changes received while
+loading or seeking coalesce until ready. Each direction loops within its own
+120-second segment. One second without actual XY motion releases input ownership
+but does not pause the video or change its last direction. This uses pre-encoded
+frames and ordinary seek/Play; it does not introduce a negative-rate decoder API.
+The media contract and visible transition quality require device acceptance.
+
 The top-level `pointerShuttle: true` optionally steers this passive looping
 background through existing native pause, absolute-seek and resume operations.
 It is off by default. Fresh horizontal pointer displacement from the center
