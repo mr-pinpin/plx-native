@@ -56,7 +56,6 @@ impl Controller {
             Reply::Start(Some(grant))=>{self.stops.push(grant);None},
             Reply::Start(None)|Reply::Heartbeat(false)=>{
                 self.retire();self.next=Instant::now()+Duration::from_secs(5);
-                if foreground{self.desired=Some(self.config.scene.clone());}
                 Some(Change::Passive)
             },
             Reply::Heartbeat(true)=>{
@@ -87,7 +86,7 @@ impl Controller {
         }
         change
     }
-    pub fn failed(&mut self){self.retire();self.next=Instant::now()+Duration::from_secs(5);self.desired=Some(self.config.scene.clone());}
+    pub fn failed(&mut self){self.retire();self.next=Instant::now()+Duration::from_secs(5);}
 }
 impl Drop for Controller {fn drop(&mut self){if let Some(grant)=self.active.take(){let _=worker(move||{let _=session_request(&grant,"render.scene.stop");Reply::Stopped});}}}
 fn worker(job:impl FnOnce()->Reply+Send+'static)->Option<Receiver<Reply>>{
@@ -135,11 +134,11 @@ mod tests {
         assert!(controller.active.is_none());assert_eq!(controller.stops.len(),2);
     }
     #[test]
-    fn scene_change_during_heartbeat_is_not_delayed_and_failure_returns_to_default(){
+    fn scene_change_during_heartbeat_survives_old_failure_and_can_return_home(){
         let mut controller=controller();controller.active=Some(grant("forest"));controller.select("atlas");
         controller.accept(Reply::Heartbeat(true),true);assert!(controller.next<=Instant::now());
         assert!(matches!(controller.accept(Reply::Heartbeat(false),true),Some(Change::Passive)));
-        assert!(controller.active.is_none());assert_eq!(controller.desired.as_deref(),Some("forest"));assert_eq!(controller.stops.len(),1);
-        controller.select("atlas");assert!(controller.home());assert!(!controller.home());
+        assert!(controller.active.is_none());assert_eq!(controller.desired.as_deref(),Some("atlas"));assert_eq!(controller.stops.len(),1);
+        assert!(controller.home());assert!(!controller.home());
     }
 }
