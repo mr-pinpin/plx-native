@@ -1632,7 +1632,7 @@ pub fn pump(ps: &mut crate::route::PlaybackSession, pa: &mut super::adapter::Pla
         // into a session whose mode no longer anchors in place), go straight to `reload_at`.
         if eng.seek_retries < 2 && !seek_reloads(seek_mode()) {
             eng.seek_retries += 1;
-            SHARED.seek_to_ns.store(tgt, Release); // re-publish; the demux thread seeks on it
+            publish_demux_seek(eng,tgt); // re-publish and wake a local EOF-parked producer
             SHARED.seek_target_ns.store(tgt, Relaxed); // rebase guard keys on the retried target
             eng.seek_armed_at = now;
             super::log(&format!(
@@ -1774,7 +1774,7 @@ pub fn pump(ps: &mut crate::route::PlaybackSession, pa: &mut super::adapter::Pla
         // keyframe. disp_base=0 (rebase to the landed keyframe).
         eng.flushed = true;
         eng.presentation_rearm_pending = false;
-        SHARED.seek_to_ns.store(t, Release); // the demux thread's av_seek target
+        publish_demux_seek(eng,t); // the demux thread's av_seek target
         SHARED.seek_target_ns.store(t, Relaxed); // rebase guard: reject stale drifted keyframes
         SHARED.disp_base.store(0, Relaxed);
         super::log(&format!(
@@ -4530,4 +4530,16 @@ mod end_of_film_tests {
             rig.facts()
         );
     }
+}
+
+/// Local packet EOF ends a queue epoch, not its seekable producer. Reset both
+/// EOF flags and publish/wake under their locks before this frame can feed EOS.
+fn publish_demux_seek(eng:&mut Engine,target:i64){
+    if SHARED.local_source.load(Acquire){
+        if let (Some(video),Some(audio))=(eng.aq_video.as_mut(),eng.aq_audio.as_mut()){
+            if crate::aq::aq_reopen_for_seek(&mut **video,&mut **audio,||SHARED.seek_to_ns.store(target,Release)){
+                eng.eos_pushed=false;SHARED.pipeline_eos.store(false,Release);
+            }
+        }
+    }else{SHARED.seek_to_ns.store(target,Release);}
 }

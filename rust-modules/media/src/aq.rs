@@ -406,6 +406,238 @@ pub fn aq_set_eof(q: *mut AuQueue) {
     }
 }
 
+/// A local progressive producer keeps its demux/context alive at true packet EOF.
+/// The predicate only reads its seek mailbox; it must never lock another queue.
+pub fn aq_park_local_eof(
+    video: *mut AuQueue,
+    audio: *mut AuQueue,
+    pending: impl Fn() -> bool,
+) -> bool {
+    let Some(mut pair) = QueuePair::lock(video, audio) else {
+        return false;
+    };
+    unsafe {
+        if (*video).abort != 0 || (*audio).abort != 0 {
+            return false;
+        }
+        if !pending() {
+            (*video).eof = 1;
+            (*audio).eof = 1;
+            libc::pthread_cond_broadcast(ptr::addr_of_mut!((*video).not_empty));
+            libc::pthread_cond_broadcast(ptr::addr_of_mut!((*audio).not_empty));
+        }
+        // Only the video mutex is held during the wait. Abort already broadcasts
+        // not_full; seek publication uses this same mutex, preventing lost wakeups.
+        pair.release_audio();
+        while (*video).abort == 0 && !pending() {
+            libc::pthread_cond_wait(
+                ptr::addr_of_mut!((*video).not_full),
+                ptr::addr_of_mut!((*video).m),
+            );
+        }
+        (*video).abort == 0 && pending()
+    }
+}
+
+/// Reopen both lane epochs and publish the seek under the same EOF/abort locks.
+/// The publication closure performs only the existing atomic mailbox store.
+pub fn aq_reopen_for_seek(
+    video: *mut AuQueue,
+    audio: *mut AuQueue,
+    publish: impl FnOnce(),
+) -> bool {
+    let Some(_pair) = QueuePair::lock(video, audio) else {
+        return false;
+    };
+    unsafe {
+        if (*video).abort != 0 || (*audio).abort != 0 {
+            return false;
+        }
+        (*video).eof = 0;
+        (*audio).eof = 0;
+        publish();
+        libc::pthread_cond_broadcast(ptr::addr_of_mut!((*video).not_full));
+        libc::pthread_cond_broadcast(ptr::addr_of_mut!((*audio).not_full));
+        true
+    }
+}
+
+// These two local-only operations take locks in the same video -> audio order.
+// No caller may perform I/O or lock another queue in its predicate/publication.
+struct QueuePair {
+    video: *mut AuQueue,
+    audio: *mut AuQueue,
+    audio_locked: bool,
+}
+impl QueuePair {
+    fn lock(video: *mut AuQueue, audio: *mut AuQueue) -> Option<Self> {
+        if video.is_null() || audio.is_null() || video == audio {
+            return None;
+        }
+        unsafe {
+            libc::pthread_mutex_lock(ptr::addr_of_mut!((*video).m));
+            libc::pthread_mutex_lock(ptr::addr_of_mut!((*audio).m));
+        }
+        Some(Self {
+            video,
+            audio,
+            audio_locked: true,
+        })
+    }
+    fn release_audio(&mut self) {
+        if self.audio_locked {
+            unsafe {
+                libc::pthread_mutex_unlock(ptr::addr_of_mut!((*self.audio).m));
+            }
+            self.audio_locked = false;
+        }
+    }
+}
+impl Drop for QueuePair {
+    fn drop(&mut self) {
+        self.release_audio();
+        unsafe {
+            libc::pthread_mutex_unlock(ptr::addr_of_mut!((*self.video).m));
+        }
+    }
+}
+
+#[cfg(test)]
+mod local_eof_tests {
+    use super::*;
+    use std::io::{Read, Seek, SeekFrom};
+    use std::sync::{
+        atomic::{AtomicI64, Ordering},
+        mpsc, Arc,
+    };
+    #[test]
+    fn local_worker_survives_packet_eof_rewinds_same_file_and_abort_wakes_it() {
+        let path = std::env::temp_dir().join(format!("pinpin-eof-worker-{}", std::process::id()));
+        std::fs::write(&path, b"packet").unwrap();
+        let mut file = std::fs::File::open(&path).unwrap();
+        let mut video = aq_new(1024);
+        let mut audio = aq_new(1024);
+        let (v, a) = (
+            (&mut *video as *mut AuQueue) as usize,
+            (&mut *audio as *mut AuQueue) as usize,
+        );
+        let seek = Arc::new(AtomicI64::new(-1));
+        let worker_seek = seek.clone();
+        let (sent, seen) = mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            loop {
+                let mut packet = Vec::new();
+                file.read_to_end(&mut packet).unwrap();
+                if !packet.is_empty() {
+                    assert_eq!(
+                        aq_push(v as *mut _, packet.as_ptr(), packet.len() as _, 0, 1, 1),
+                        0
+                    );
+                }
+                if !aq_park_local_eof(v as *mut _, a as *mut _, || {
+                    worker_seek.load(Ordering::Acquire) >= 0
+                }) {
+                    break;
+                }
+                let target = worker_seek.swap(-1, Ordering::AcqRel);
+                file.seek(SeekFrom::Start(target as u64)).unwrap();
+            }
+            sent.send(()).unwrap();
+        });
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        let mut first = 0;
+        let mut eof = 0;
+        while eof == 0 && std::time::Instant::now() < deadline {
+            let n = aq_pop(&mut *video, &mut eof);
+            if !n.is_null() {
+                first += 1;
+                unsafe {
+                    libc::free(n.cast());
+                }
+            }
+            std::thread::yield_now();
+        }
+        let alive = seen.try_recv().is_err();
+        aq_reopen_for_seek(&mut *video, &mut *audio, || {
+            seek.store(0, Ordering::Release)
+        });
+        let mut second = 0;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+        while second == 0 && std::time::Instant::now() < deadline {
+            let n = aq_pop(&mut *video, &mut eof);
+            if !n.is_null() {
+                second += 1;
+                unsafe {
+                    libc::free(n.cast());
+                }
+            }
+            std::thread::yield_now();
+        }
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+        let mut parked_eof = 0;
+        while parked_eof == 0 && std::time::Instant::now() < deadline {
+            aq_pop(&mut *video, &mut parked_eof);
+            std::thread::yield_now();
+        }
+        aq_abort(&mut *video);
+        aq_abort(&mut *audio);
+        let stopped = seen.recv_timeout(std::time::Duration::from_secs(1)).is_ok();
+        worker.join().unwrap();
+        aq_destroy(&mut *video);
+        aq_destroy(&mut *audio);
+        std::fs::remove_file(path).unwrap();
+        assert_eq!(first, 1);
+        assert!(alive, "packet EOF must park the producer, not retire it");
+        assert_eq!(
+            second, 1,
+            "a backward seek after EOF must produce another packet"
+        );
+        assert_eq!(
+            parked_eof, 1,
+            "ambient playback still sees true EOF while producer parks"
+        );
+        assert!(
+            stopped,
+            "abort wakes a parked producer without another seek"
+        );
+    }
+    #[test]
+    fn seek_reopens_both_eof_flags_and_preserves_abort() {
+        let mut v = aq_new(1);
+        let mut a = aq_new(1);
+        aq_set_eof(&mut *v);
+        aq_set_eof(&mut *a);
+        assert!(aq_reopen_for_seek(&mut *v, &mut *a, || {}));
+        let mut ve = 1;
+        let mut ae = 1;
+        aq_pop(&mut *v, &mut ve);
+        aq_pop(&mut *a, &mut ae);
+        aq_abort(&mut *v);
+        let mut published = false;
+        let refused = aq_reopen_for_seek(&mut *v, &mut *a, || published = true);
+        aq_destroy(&mut *v);
+        aq_destroy(&mut *a);
+        assert_eq!((ve, ae), (0, 0));
+        assert!(!refused && !published);
+    }
+    #[test]
+    fn an_already_published_seek_cannot_be_overwritten_by_old_eof() {
+        let mut v = aq_new(1);
+        let mut a = aq_new(1);
+        let target = AtomicI64::new(-1);
+        aq_reopen_for_seek(&mut *v, &mut *a, || target.store(7, Ordering::Release));
+        assert!(aq_park_local_eof(&mut *v, &mut *a, || target
+            .load(Ordering::Acquire)
+            >= 0));
+        let (mut ve, mut ae) = (1, 1);
+        aq_pop(&mut *v, &mut ve);
+        aq_pop(&mut *a, &mut ae);
+        aq_destroy(&mut *v);
+        aq_destroy(&mut *a);
+        assert_eq!((ve, ae), (0, 0));
+    }
+}
+
 pub fn aq_abort(q: *mut AuQueue) {
     if q.is_null() {
         return;

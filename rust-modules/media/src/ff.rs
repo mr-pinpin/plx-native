@@ -8678,6 +8678,7 @@ pub fn demux_cached(
     hs: SendPtr<HttpStream>,
 ) {
     PUSHED_ANY.store(false, Ordering::Relaxed);
+    SHARED.local_source.store(false, Ordering::Release);
     *SHARED.side_anchor.lock().unwrap_or_else(|e| e.into_inner()) = None;
     // Refuse rather than read a struct whose shape we do not know (see `boot`). EOF must still be
     // set on both lanes or `pump` waits forever on a queue nothing will ever fill — the same
@@ -8858,6 +8859,7 @@ pub fn demux_cached(
                 let (src, size) = if let Some(file) = local {
                     let size=file.size();SHARED.file_size.store(size,Ordering::Release);
                     SHARED.dg_http_status.store(0,Ordering::Relaxed);
+                    SHARED.local_source.store(true,Ordering::Release);
                     crate::player::log("ff: verified local background cache selected");
                     (Src::Local(file),size)
                 } else if origin.is_tls() {
@@ -9300,6 +9302,14 @@ pub fn demux_cached(
                     }
                     let r = av_read_frame(fmt, pkt);
                     if frame_read_failed(&mut state, r) {
+                        if r==AVERROR_EOF&&!state.io_failed&&matches!(state.src,Src::Local(_))&&PUSHED_ANY.load(Ordering::Relaxed){
+                            headroom.withdraw(aq_p);
+                            crate::player::log("ff: local packet EOF; retaining seekable context");
+                            if crate::aq::aq_park_local_eof(aq_p,aqa_p,||SHARED.seek_to_ns.load(Ordering::Acquire)>=0){
+                                crate::player::log("ff: local EOF parked context received seek");
+                                continue;
+                            }
+                        }
                         // Genuine end of stream, teardown, or an unrecovered I/O error published by
                         // `frame_read_failed`. NOT an app seek — that is serviced at the top of this
                         // loop and never surfaces as a read error.
@@ -9687,6 +9697,7 @@ pub fn demux_cached(
     }
     crate::aq::aq_set_eof(aq_p);
     crate::aq::aq_set_eof(aqa_p); // EOF on the audio lane too
+    SHARED.local_source.store(false,Ordering::Release);
     crate::player::log("ff: demux ended");
 }
 

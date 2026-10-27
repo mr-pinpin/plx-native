@@ -577,6 +577,9 @@ pub struct Shared {
     // 0 for direct-play (file PTS already IS content time) and for the initial transcode.
     pub disp_base: AtomicI64,
 
+    /// The current demux worker actually owns a verified local progressive File.
+    pub local_source: AtomicBool,
+
     // main/pump (M) -> demux (D)
     // The demux seek target in content-ns (-1 = none). The pump publishes it and the demux
     // thread consumes it with an av_seek_frame between two reads — it is the ENTIRE direct-play
@@ -1016,6 +1019,7 @@ impl Shared {
             container_hdr: Mutex::new(None),
             pts_shift: AtomicI64::new(0),
             disp_base: AtomicI64::new(0),
+            local_source: AtomicBool::new(false),
             seek_to_ns: AtomicI64::new(-1),
             seek_target_ns: AtomicI64::new(-1),
             seeking: AtomicBool::new(false),
@@ -1617,6 +1621,7 @@ impl Shared {
         self.dg_cb_err.store(0, Ordering::Relaxed);
         self.dg_cb_err_at.store(0, Ordering::Relaxed);
         self.dg_cb_err_num.store(0, Ordering::Relaxed);
+        self.local_source.store(false,Ordering::Release);
         self.dg_http_status.store(0, Ordering::Relaxed);
         self.dg_transport_rc.store(0, Ordering::Relaxed);
         self.dg_transport_age_ms.store(-1, Ordering::Relaxed);

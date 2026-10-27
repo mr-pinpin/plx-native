@@ -36,8 +36,15 @@ The fixed root and file reject symlinks, size is bounded to 128 MiB, and SHA-256
 checks cancellation between 64 KiB reads. Verification and playback retain the same File.
 `Src::Local` uses the existing custom-AVIO read/seek/size and queue-abort rules, with no
 socket, curl handle or new Starfish/FFmpeg ABI. Missing or invalid cache falls back to the
-original network source before packets are emitted. Host tests prove byte handling and
-abort/EOF behavior, not native video decode or the absence of a visible transition.
+original network source before packets are emitted. At true local packet EOF, the
+producer publishes both lane EOF flags but retains the demux context/File, parked on
+the video queue's existing condition variable. A local seek clears both EOF flags,
+re-arms the engine's EOS latch and publishes/wakes under the same paired queue locks;
+then the original worker uses its existing av_seek_frame path. Abort wakes the parked
+producer for normal cleanup, while ambient playback can still drain to natural EOS.
+HTTP/HLS sources keep their existing worker lifetime. Host tests prove byte handling,
+queue/worker lifetime and abort/EOF behavior, not native video decode or the absence
+of a visible transition.
 
 
 ## Threading model (this is the whole ballgame)
