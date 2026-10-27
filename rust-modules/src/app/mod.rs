@@ -108,6 +108,7 @@ pub(crate) mod boot;
 mod family_home;
 mod family_input;
 mod family_shuttle;
+mod family_direction;
 mod family_scene;
 pub(crate) mod bootstrap;
 #[cfg(test)]
