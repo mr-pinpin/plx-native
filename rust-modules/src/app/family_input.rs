@@ -71,7 +71,9 @@ impl Bridge {
                 last=Some(packet);releasing=!ok;next=plx_base::task::worker_now(off)+Duration::from_millis(if ok{50}else{250});
                 if !ok {
                     let mut slot=worker.0.lock().unwrap_or_else(|e|e.into_inner());
-                    if slot.generation==generation {slot.packet=Packet::neutral();}
+                    // Managed positions remain desired intent; the acknowledged neutral barrier
+                    // still precedes their retry. Explicit release updates the slot itself.
+                    if slot.generation==generation&&!slot.position {slot.packet=Packet::neutral();}
                     // The peer's 750ms lease also releases controls if this best-effort neutral cannot arrive.
                     last=None;
                 }
