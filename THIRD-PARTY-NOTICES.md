@@ -616,3 +616,15 @@ then-current MIT grant. That original grant and Gleb Linnik notice are preserved
 `licenses/PlxNative-historical-MIT.txt`; no ownership transfer is claimed.
 
 The repository carries no copy of the SDL2, GLES2 or KHR headers; `include/` holds only the project's own `ass.h` facade.
+
+## PinPin Home launcher artwork
+
+The newly commissioned family icon exports in `pkg/family/icon.png` and
+`pkg/family/largeIcon.png` may accompany this application under GPL-3.0-or-later,
+to the extent the project owns or is authorized to license copyrightable rights.
+No exclusive copyright is asserted in unprotectable AI output. The exact source
+and export hashes are recorded in `pkg/family/provenance.json`; the original
+outputs and scoped grant are in the Mr. PinPin source repository's
+`apps/family-native/icon/` directory. This grant covers these specific new
+branding outputs; it does not relicense the original books or reference artwork,
+or grant a general character license.
