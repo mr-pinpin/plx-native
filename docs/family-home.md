@@ -42,13 +42,19 @@ The top-level `pointerShuttle: true` optionally steers this passive looping
 background through existing native pause, absolute-seek and resume operations.
 It is off by default. Fresh horizontal pointer displacement from the center
 sets desired signed timeline velocity, proportional up to eight seconds of source time
-per second at the edges; the center dead zone holds the current picture.
+per second at the edges; the centre advances at normal +1× through that same
+exclusive controlled timeline. Centre movement does not hand control to a
+competing ambient clock or freeze the picture.
 Absolute seeks are coalesced to at most four per second and wait for loading,
 pending seeks and seek preroll to settle. Frame-clock gaps are bounded and
 targets wrap within the measured duration. This approximates reverse motion
 through seeks; it does not claim a hardware negative playback-rate API.
-Dock/modal/D-pad handoff, window backgrounding, leaving the scene or three seconds of stale input
-releases steering and resumes ambient playback. A managed Mini scene keeps its
+Actual X or Y coordinate changes retain control. Duplicate stationary packets
+do not renew ownership or reclaim it after release. After one complete second
+without movement, ambient playback resumes once an in-flight seek settles and
+the resume is accepted; refusals retain ownership for a bounded retry. Dock,
+modal and D-pad handoff, window backgrounding and leaving the scene retain their
+existing input priority. A managed Mini scene keeps its
 own input authority and is never controlled by this local shuttle. Actual
 smoothness and pointer behavior still require TV verification.
 

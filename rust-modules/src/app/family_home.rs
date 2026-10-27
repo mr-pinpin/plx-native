@@ -55,7 +55,7 @@ impl Runtime {
     }
     pub fn control_pointer(&mut self,x:f32,y:f32,on_control:bool){
         let point=if on_control{None}else{plx_screens::family_home::scene_point(self.config.apps.len(),x,y)};
-        if self.shuttle_enabled(){self.shuttle.pointer(point.map(|point|point[0]),super::clock::now());if let Some(input)=&self.input{input.release();}return;}
+        if self.shuttle_enabled(){self.shuttle.pointer_motion(point,super::clock::now());if let Some(input)=&self.input{input.release();}return;}
         self.shuttle.release();if let Some(input)=&self.input{input.pointer(point);}
     }
     pub fn control_click(&mut self,down:bool)->bool{
