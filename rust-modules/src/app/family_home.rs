@@ -129,7 +129,7 @@ impl Runtime {
             match action{super::family_direction::Action::Pause=>{let _=plx_media::player::pause(pa);},super::family_direction::Action::Seek(target)=>{self.rate.invalidate_after_seek();plx_media::player::request_seek(target);},super::family_direction::Action::Resume=>{let _=plx_media::player::resume(pa);},super::family_direction::Action::None=>{}}
             if self.config.pointer_direction_rate&&ready&&!seeking{
                 let owner=pa.engine().map(|engine|engine.route_start);
-                if let Some(rate)=self.rate.plan(owner,self.direction.rate_milli(now),now){
+                if let Some(rate)=self.rate.plan(owner,self.direction.rate_milli(now),now,plx_media::player::lifecycle::paused()){
                     let accepted=plx_media::player::set_background_rate(ps,pa,rate);self.rate.acknowledge(rate,accepted);
                     if !accepted&&rate!=1000{let reset=plx_media::player::set_background_rate(ps,pa,1000);plx_base::eventlog::log(&format!("family direction rate refused; baseline reset admitted={reset}"));}
                     plx_base::eventlog::log(&format!("family direction rate={} accepted={} (native clock effect requires PTS measurement)",rate,accepted));

@@ -474,7 +474,7 @@ pub(crate) fn restore_preroll_volume(mt: &plx_base::task::MainThread) {
 /// Optional rate control is confined to a verified local background and an idle live timeline.
 /// The native bool is an admission result; device PTS/frame measurements still prove the rate.
 pub fn set_background_rate(ps:&crate::route::PlaybackSession,pa:&mut adapter::PlayerAdapter,milli_rate:u16)->bool{
-    if !(250..=2000).contains(&milli_rate)||!crate::route::is_background(ps)||!local_source()
+    if !(250..=2000).contains(&milli_rate)||lifecycle::paused()||!crate::route::is_background(ps)||!local_source()
         ||!pa.is_live()||!seen_frame()||seek_pending()>=0||seek_preroll_active(){return false;}
     unsafe{sink().set_play_rate(pa.mt(),i32::from(milli_rate))!=0}
 }

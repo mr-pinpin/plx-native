@@ -66,7 +66,8 @@ impl Direction{
 pub(super) struct RateOwner<Attempt>{owner:Option<Attempt>,applied:u16,unavailable:bool,called_at:Option<u32>}
 impl<Attempt> Default for RateOwner<Attempt>{fn default()->Self{Self{owner:None,applied:1000,unavailable:false,called_at:None}}}
 impl<Attempt:Copy+PartialEq> RateOwner<Attempt>{
- pub fn plan(&mut self,owner:Option<Attempt>,desired:u16,now:u32)->Option<u16>{
+ pub fn plan(&mut self,owner:Option<Attempt>,desired:u16,now:u32,paused:bool)->Option<u16>{
+  if paused{return None;}
   if self.owner!=owner{*self=Self{owner,..Default::default()};}
   if owner.is_none()||self.unavailable||!(250..=2000).contains(&desired)||desired==self.applied{return None;}
   if self.called_at.is_some_and(|at|now.wrapping_sub(at)<100){return None;}
@@ -87,9 +88,20 @@ impl<Attempt:Copy+PartialEq> RateOwner<Attempt>{
   edge.release();assert_eq!(edge.rate_milli(100002),1000);
  }
  #[test]fn refusal_is_load_scoped_and_successful_rates_are_coalesced(){
-  let mut r=RateOwner::default();assert_eq!(r.plan(Some(1),1500,0),Some(1250));r.acknowledge(1250,false);
-  assert_eq!(r.plan(Some(1),2000,1000),None);assert_eq!(r.plan(Some(2),1500,1001),Some(1250));r.acknowledge(1250,true);
-  assert_eq!(r.plan(Some(2),2000,1050),None);assert_eq!(r.plan(Some(2),1300,1200),None);assert_eq!(r.plan(Some(2),1000,1200),Some(1000));r.acknowledge(1000,true);assert_eq!(r.plan(Some(2),1000,1400),None);
-  r.invalidate_after_seek();assert_eq!(r.plan(Some(2),1000,1401),Some(1000));r.acknowledge(1000,true);assert_eq!(r.plan(None,2000,1500),None);
+  let mut r=RateOwner::default();assert_eq!(r.plan(Some(1),1500,0,false),Some(1250));r.acknowledge(1250,false);
+  assert_eq!(r.plan(Some(1),2000,1000,false),None);assert_eq!(r.plan(Some(2),1500,1001,false),Some(1250));r.acknowledge(1250,true);
+  assert_eq!(r.plan(Some(2),2000,1050,false),None);assert_eq!(r.plan(Some(2),1300,1200,false),None);assert_eq!(r.plan(Some(2),1000,1200,false),Some(1000));r.acknowledge(1000,true);assert_eq!(r.plan(Some(2),1000,1400,false),None);
+  r.invalidate_after_seek();assert_eq!(r.plan(Some(2),1000,1401,false),Some(1000));r.acknowledge(1000,true);assert_eq!(r.plan(None,2000,1500,false),None);
+ }
+}
+
+#[cfg(test)]mod paused_rate_guard_test{
+ use super::*;
+ #[test]fn centre_pause_never_dispatches_a_rate_or_poison_capability(){
+  let mut owner=RateOwner::default();
+  assert_eq!(owner.plan(Some(1),2000,0,true),None,"a vendor rate setter must not undo the centre Pause");
+  assert_eq!(owner.plan(Some(1),2000,100,false),Some(1250),"holding is not a capability refusal");owner.acknowledge(1250,true);
+  assert_eq!(owner.plan(Some(1),1000,200,true),None,"do not reset rate while transport is held");
+  assert_eq!(owner.plan(Some(1),1000,200,false),Some(1000),"release resumes ordinary baseline admission");
  }
 }
