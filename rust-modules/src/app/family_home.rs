@@ -72,8 +72,9 @@ impl Runtime {
     pub fn tick(&mut self,ps:&mut plx_media::route::PlaybackSession,pa:&mut plx_media::player::adapter::PlayerAdapter,now:u32,foreground:bool){
         if foreground&&!self.foreground{self.wake=true;}self.foreground=foreground;
         if let Some(change)=self.scene.as_mut().and_then(|scene|scene.poll(foreground)){
+            let switching=self.managed.is_some()||matches!(&change,super::family_scene::Change::Ready(_));
             self.release_controls();
-            if plx_media::route::is_background(ps)&&pa.is_live(){plx_media::player::stop_bufferfeed(ps,pa);}
+            if switching&&plx_media::route::is_background(ps)&&pa.is_live(){plx_media::player::stop_bufferfeed(ps,pa);}
             match change {super::family_scene::Change::Ready(grant)=>{self.managed=Some(grant.source());self.input=grant.input().as_ref().and_then(super::family_input::Bridge::start);},super::family_scene::Change::Passive=>{self.managed=None;self.input=self.config.controls.as_ref().and_then(super::family_input::Bridge::start);}}
             self.retry_at=now;
         }
