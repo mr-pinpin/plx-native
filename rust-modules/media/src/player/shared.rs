@@ -2082,6 +2082,12 @@ impl Shared {
         hold.prime_kind()
     }
 
+    /// Rate changes may not take the clock away from a pending Pause/Play certificate.
+    pub fn clock_rate_ready(&self) -> bool {
+        let clock = self.hls_clock.lock().unwrap_or_else(|e| e.into_inner());
+        clock.phase == HlsClockPhase::Running && !clock.user_held
+    }
+
     /// Final check-and-reserve for `sf_play`. Candidate/trial arm uses the same mutex, eliminating
     /// the old check/use gap between the last seqlock read and the native Play call.
     pub fn reserve_hls_prime_play(
@@ -3146,6 +3152,22 @@ mod tests {
             "a queued stream must reopen feeding and earn a balanced prime before native Play",
         );
         assert_eq!(s.hls_prime_kind(), Some(HlsPrimeKind::Resume));
+    }
+
+    #[test]
+    fn optional_rate_waits_for_the_resume_prime_and_accepted_play(){
+        let s=Shared::new();assert!(s.clock_rate_ready());
+        let Some(HlsUserPause::Issue(pause))=s.prepare_hls_user_pause() else{panic!("expected Pause");};
+        assert!(!s.clock_rate_ready());
+        assert_eq!(s.complete_hls_user_pause(pause,true),HlsPauseCompletion::Accepted);
+        assert!(!s.clock_rate_ready());
+        assert_eq!(s.prepare_hls_user_resume(true),Some(HlsUserResume::Prime));
+        assert!(!s.clock_rate_ready(),"unpaused feeding does not authorize a rate during ResumePrime");
+        let generation=s.hls_candidate_generation.load(Ordering::Acquire);
+        let (play,_)=s.reserve_hls_prime_play(HlsPrimeKind::Resume,generation,s.hls_recovery()).unwrap();
+        assert!(!s.clock_rate_ready(),"the native Play call still owns this transition");
+        assert_eq!(s.complete_hls_prime_play(play,true),HlsPlayCompletion::Accepted{resume_acb:true});
+        assert!(s.clock_rate_ready());
     }
 
     #[test]

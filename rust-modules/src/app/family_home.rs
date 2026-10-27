@@ -127,7 +127,7 @@ impl Runtime {
             if self.config.pointer_diagnostics&&!matches!(action,super::family_direction::Action::None){plx_base::eventlog::log(&format!("family direction action={action:?} ready={ready} pos={} duration={} owned={}",plx_media::player::playpos_ns(),plx_media::player::duration_ns(),self.direction.owned(now)));}
             let seeking=matches!(action,super::family_direction::Action::Seek(_));
             match action{super::family_direction::Action::Pause=>{let _=plx_media::player::pause(pa);},super::family_direction::Action::Seek(target)=>{self.rate.invalidate_after_seek();plx_media::player::request_seek(target);},super::family_direction::Action::Resume=>{let _=plx_media::player::resume(pa);},super::family_direction::Action::None=>{}}
-            if self.config.pointer_direction_rate&&ready&&!seeking{
+            if self.config.pointer_direction_rate&&ready&&!seeking&&plx_media::player::background_rate_ready(ps,pa){
                 let owner=pa.engine().map(|engine|engine.route_start);
                 if let Some(rate)=self.rate.plan(owner,self.direction.rate_milli(now),now,plx_media::player::lifecycle::paused()){
                     let accepted=plx_media::player::set_background_rate(ps,pa,rate);self.rate.acknowledge(rate,accepted);
