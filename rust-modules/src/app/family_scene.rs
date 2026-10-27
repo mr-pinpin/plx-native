@@ -54,8 +54,12 @@ impl Controller {
                 self.retire();self.active=Some(grant.clone());self.next=super::clock::now().wrapping_add(10000);Some(Change::Ready(grant))
             },
             Reply::Start(Some(grant))=>{self.stops.push(grant);None},
-            Reply::Start(None)|Reply::Heartbeat(false)=>{
+            Reply::Start(None)=>{
                 self.retire();self.next=super::clock::now().wrapping_add(5000);
+                Some(Change::Passive)
+            },
+            Reply::Heartbeat(false)=>{
+                self.failed();
                 Some(Change::Passive)
             },
             Reply::Heartbeat(true)=>{
@@ -86,7 +90,13 @@ impl Controller {
         }
         change
     }
-    pub fn failed(&mut self){self.retire();self.next=super::clock::now().wrapping_add(5000);}
+    pub fn failed(&mut self){
+        // A failed displayed scene yields to Home once. Retrying it without another
+        // selection repeatedly replaces the healthy local background with black.
+        // A newer user selection must survive a failure from the previous scene.
+        if self.active.as_ref().is_some_and(|grant|self.desired.as_deref()==Some(grant.scene.as_str())&&grant.scene!=self.config.scene){self.desired=Some(self.config.scene.clone());}
+        self.retire();self.next=super::clock::now().wrapping_add(5000);
+    }
 }
 impl Drop for Controller {fn drop(&mut self){if let Some(grant)=self.active.take(){let _=worker(move||{let _=session_request(&grant,"render.scene.stop");Reply::Stopped});}}}
 fn worker(job:impl FnOnce()->Reply+Send+'static)->Option<Receiver<Reply>>{
@@ -155,5 +165,24 @@ mod tests {
         assert!(matches!(controller.accept(Reply::Heartbeat(false),true),Some(Change::Passive)));
         assert!(controller.active.is_none());assert_eq!(controller.desired.as_deref(),Some("atlas"));assert_eq!(controller.stops.len(),1);
         assert!(controller.home());assert!(!controller.home());
+    }
+    #[test]
+    fn failed_selected_scene_returns_to_default_instead_of_repeating_black_loads(){
+        let mut controller=controller();controller.select("atlas");controller.active=Some(grant("atlas"));
+        controller.failed();
+        assert_eq!(controller.desired.as_deref(),Some("forest"));
+        assert!(controller.active.is_none());
+        assert!(!controller.home(),"failed scene already yielded to the launcher");
+    }
+    #[test]
+    fn failed_displayed_scene_does_not_erase_a_newer_user_selection(){
+        let mut controller=controller();controller.active=Some(grant("atlas"));controller.select("alambique");
+        controller.failed();assert_eq!(controller.desired.as_deref(),Some("alambique"));
+    }
+    #[test]
+    fn lost_active_scene_heartbeat_also_yields_to_home_once(){
+        let mut controller=controller();controller.select("atlas");controller.active=Some(grant("atlas"));
+        assert!(matches!(controller.accept(Reply::Heartbeat(false),true),Some(Change::Passive)));
+        assert_eq!(controller.desired.as_deref(),Some("forest"));assert_eq!(controller.stops.len(),1);
     }
 }
