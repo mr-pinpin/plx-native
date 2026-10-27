@@ -53,7 +53,7 @@ Absolute seeks are coalesced to at most four per second and wait for loading,
 pending seeks and seek preroll to settle. Frame-clock gaps are bounded and
 targets wrap within the measured duration. This approximates reverse motion
 through seeks; it does not claim a hardware negative playback-rate API.
-Dock/modal/D-pad handoff, hiding, leaving the scene or 750 ms of stale input
+Dock/modal/D-pad handoff, hiding, leaving the scene or three seconds of stale input
 releases steering and resumes ambient playback. A managed Mini scene keeps its
 own input authority and is never controlled by this local shuttle. Actual
 smoothness and pointer behavior still require TV verification.

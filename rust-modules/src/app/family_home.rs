@@ -102,8 +102,8 @@ impl Runtime {
         if self.shuttle_enabled()&&pa.is_live()&&plx_media::route::is_background(ps){
             let ready=!plx_media::player::loading(ps)&&plx_media::player::seek_pending()<0&&!plx_media::player::seek_preroll_active()&&plx_media::player::seen_frame();
             match self.shuttle.step(now,ready,plx_media::player::playpos_ns(),plx_media::player::duration_ns()){
-                super::family_shuttle::Action::Pause=>{if !plx_media::player::pause(pa){self.shuttle.forget();}},
-                super::family_shuttle::Action::Resume=>{plx_media::player::resume(pa);},
+                super::family_shuttle::Action::Pause=>{let accepted=plx_media::player::pause(pa);self.shuttle.acknowledge_pause(accepted);},
+                super::family_shuttle::Action::Resume=>{let accepted=plx_media::player::resume(pa);self.shuttle.acknowledge_resume(accepted);},
                 super::family_shuttle::Action::Seek(target)=>plx_media::player::request_seek(target),
                 super::family_shuttle::Action::None=>{},
             }

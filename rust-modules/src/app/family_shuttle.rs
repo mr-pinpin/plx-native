@@ -1,6 +1,7 @@
 //! Pure pointer-to-timeline policy. The existing frame owner executes its pause/seek/resume
 //! intents; no codec rate or undocumented reverse-playback verb is introduced.
-const STALE_MS: u32 = 750;
+// Match the existing native pointer's three-second idle visibility window.
+const STALE_MS: u32 = 3000;
 const SEEK_MS: u32 = 250;
 const DEAD_ZONE: f64 = 0.06;
 const MAX_SPEED: f64 = 8.0;
@@ -16,6 +17,8 @@ pub(super) struct Shuttle {
     pointer: Option<(f32, u32)>,
     last_tick: Option<u32>,
     last_seek: Option<u32>,
+    last_pause: Option<u32>,
+    last_resume: Option<u32>,
     target: Option<f64>,
     holding: bool,
 }
@@ -31,6 +34,17 @@ impl Shuttle {
     pub fn forget(&mut self) {
         *self = Self::default();
     }
+    pub fn acknowledge_pause(&mut self, accepted: bool) {
+        if !accepted {
+            self.holding = false;
+        }
+    }
+    pub fn acknowledge_resume(&mut self, accepted: bool) {
+        if accepted {
+            self.holding = false;
+            self.last_resume = None;
+        }
+    }
     pub fn step(&mut self, now: u32, ready: bool, position: i64, duration: i64) -> Action {
         let point = self
             .pointer
@@ -40,11 +54,16 @@ impl Shuttle {
             self.last_tick = None;
             self.last_seek = None;
             self.target = None;
-            return if std::mem::take(&mut self.holding) {
-                Action::Resume
-            } else {
-                Action::None
-            };
+            if self.holding
+                && ready
+                && self
+                    .last_resume
+                    .is_none_or(|last| now.wrapping_sub(last) >= SEEK_MS)
+            {
+                self.last_resume = Some(now);
+                return Action::Resume;
+            }
+            return Action::None;
         }
         let dt = self
             .last_tick
@@ -57,6 +76,13 @@ impl Shuttle {
             return Action::None;
         }
         if !self.holding {
+            if self
+                .last_pause
+                .is_some_and(|last| now.wrapping_sub(last) < SEEK_MS)
+            {
+                return Action::None;
+            }
+            self.last_pause = Some(now);
             self.holding = true;
             self.target = Some(position as f64);
             return Action::Pause;
@@ -99,6 +125,7 @@ mod tests {
             p.step(1110, true, 60 * SECOND, 120 * SECOND),
             Action::Resume
         );
+        p.acknowledge_resume(true);
         assert_eq!(p.step(1120, true, 60 * SECOND, 120 * SECOND), Action::None);
     }
     #[test]
@@ -136,7 +163,8 @@ mod tests {
         let mut p = Shuttle::default();
         p.pointer(Some(0.5), 1000);
         p.step(1000, true, 0, 120 * SECOND);
-        assert_eq!(p.step(1751, true, 0, 120 * SECOND), Action::Resume);
+        assert_eq!(p.step(4001, true, 0, 120 * SECOND), Action::Resume);
+        p.acknowledge_resume(true);
         p.pointer(Some(0.5), 2000);
         p.step(2000, true, 0, 120 * SECOND);
         p.forget();
@@ -151,5 +179,36 @@ mod tests {
             p.step(49, true, 100_000_000, 120 * SECOND),
             Action::Seek(119 * SECOND + 300_000_000)
         );
+    }
+    #[test]
+    fn release_waits_for_an_inflight_seek_before_resuming() {
+        let mut p = Shuttle::default();
+        p.pointer(Some(0.5), 1000);
+        p.step(1000, true, 0, 120 * SECOND);
+        p.release();
+        assert_eq!(p.step(1010, false, 0, 120 * SECOND), Action::None);
+        assert_eq!(p.step(1300, true, 0, 120 * SECOND), Action::Resume);
+    }
+    #[test]
+    fn refused_resume_retains_ownership_and_retries_until_acknowledged() {
+        let mut p = Shuttle::default();
+        p.pointer(Some(0.5), 1000);
+        p.step(1000, true, 0, 120 * SECOND);
+        p.release();
+        assert_eq!(p.step(1100, true, 0, 120 * SECOND), Action::Resume);
+        p.acknowledge_resume(false);
+        assert_eq!(p.step(1200, true, 0, 120 * SECOND), Action::None);
+        assert_eq!(p.step(1350, true, 0, 120 * SECOND), Action::Resume);
+        p.acknowledge_resume(true);
+        assert_eq!(p.step(1600, true, 0, 120 * SECOND), Action::None);
+    }
+    #[test]
+    fn refused_pause_preserves_the_fresh_pointer_for_a_bounded_retry() {
+        let mut p = Shuttle::default();
+        p.pointer(Some(0.5), 1000);
+        assert_eq!(p.step(1000, true, 0, 120 * SECOND), Action::Pause);
+        p.acknowledge_pause(false);
+        assert_eq!(p.step(1100, true, 0, 120 * SECOND), Action::None);
+        assert_eq!(p.step(1250, true, 0, 120 * SECOND), Action::Pause);
     }
 }
