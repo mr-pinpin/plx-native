@@ -223,6 +223,26 @@ fn avio_over(src: Src, size: i64, aq: *mut AuQueue) -> AvioState {
     }
 }
 
+#[test]
+fn private_local_avio_reads_seeks_reports_size_eof_and_refuses_io_after_abort() {
+    let root=std::env::temp_dir().join(format!("pinpin-local-avio-{}",std::process::id()));
+    std::fs::create_dir(&root).unwrap();let root=root.canonicalize().unwrap();
+    let bytes=b"abcdef";
+    let spec=crate::local_cache::Spec{sha256:plx_base::sha256::sha256(bytes).iter().map(|b|format!("{b:02x}")).collect(),bytes:6};
+    std::fs::write(root.join(format!("{}.mp4",spec.sha256)),bytes).unwrap();
+    let file=crate::local_cache::LocalFile::fixture(&root,&spec).unwrap();
+    let mut queue=crate::aq::aq_new(1024);let mut state=avio_over(Src::Local(file),6,&mut *queue);
+    let op=&mut state as *mut AvioState as *mut c_void;let mut out=[0;3];
+    assert_eq!(seek_cb(op,0,AVSEEK_SIZE),6);
+    assert_eq!(read_cb(op,out.as_mut_ptr(),3),3);assert_eq!(&out,b"abc");
+    assert_eq!(seek_cb(op,0,SEEK_END),6);assert_eq!(read_cb(op,out.as_mut_ptr(),3),AVERROR_EOF);
+    assert_eq!(seek_cb(op,-3,SEEK_END),3);assert_eq!(read_cb(op,out.as_mut_ptr(),3),3);assert_eq!(&out,b"def");
+    crate::aq::aq_abort(&mut *queue);
+    assert_eq!(seek_cb(op,0,AVSEEK_SIZE),6,"size is not I/O and remains available during teardown");
+    assert_eq!(seek_cb(op,0,SEEK_SET),-1);assert_eq!(read_cb(op,out.as_mut_ptr(),3),AVERROR_EOF);
+    crate::aq::aq_destroy(&mut *queue);std::fs::remove_dir_all(root).unwrap();
+}
+
 /// The invariant on one opened source: what libavformat's `mov_read_chapters` does — read a
 /// little, seek to the size (or `SEEK_END` 0), read, then seek back into the file and read.
 fn seek_to_the_end_is_a_position(server: &StrictServer, st: &mut AvioState, body: &[u8]) {

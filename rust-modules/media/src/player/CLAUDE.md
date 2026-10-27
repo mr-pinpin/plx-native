@@ -15,18 +15,30 @@ dead-ish reference, and `docs/buffer-feed-plan.md` records the pivot (treat it a
 spec). The stream side: `PMS HTTP GET` → demux → per-lane access-unit
 queues with byte-cap backpressure (`aq.rs`) → the pump `Feed()`s each AU to the Starfish pipeline.
 The demuxer is **`ff.rs` — the libavformat the app BUNDLES (not the TV's), over a custom AVIO on
-one of TWO transports** (design record: `docs/ffmpeg-demuxer-plan.md`; the hand-rolled `mkv.rs`
+one of three transports** (design record: `docs/ffmpeg-demuxer-plan.md`; the hand-rolled `mkv.rs`
 fallback is retired/deleted). **Which transport is decided in `ff::demux` from the part URL's
 scheme, or by a plaintext open's redirect to https (`stream::redirect` hands that hop to curl)** —
 `AvioState` holds a source enum and `read_cb`/`seek_cb` dispatch: `http` → `stream.rs`'s raw socket, `https` → `crate::curlio`. That matters *here* because teardown is a
 different mechanism per arm: `engine::teardown` fires `stream::http_shutdown` at the socket **and**
 `curlio::abort_active()` at the curl source's wake pipe, since a thread parked in `curl_multi_wait`
-is not one any `shutdown(2)` of ours can reach. Exactly one of the two ever has anything to do. Ours ships beside the binary as `libav*-plx.so.*`, is `dlopen`'d by absolute path
+is not one any `shutdown(2)` of ours can reach. On network playback exactly one of the two has anything to do; local-file playback needs neither. Ours ships beside the binary as `libav*-plx.so.*`, is `dlopen`'d by absolute path
 and pinned to majors 63/63/61, and is built `--disable-network` with `file` as its only protocol —
 so the AVIO is not merely how bytes reach it today, it is the only way they *can*. See the root
 `docs/agent-reference.md` linking section for why. It
 emits Annex-B video AUs (param sets prepended at each keyframe) and, for AV1, Section-5 temporal units (TD OBU first, the av1C sequence header and metadata OBUs in-band on keyframes; `/tmp/plxnative-av1obu` = notd,noseq,raw tokens varies it on a debug build), for VP9 the demuxed packet unchanged (a frame carries its own headers and libpf's `video/x-vp9` caps have no `codec_data`), and AC3/EAC3, ADTS-framed AAC, or DTS core audio frames,
 and seeks by time via `av_seek_frame` (libavformat's own Cues index).
+
+An opt-in private background cache is the third transport: `background::Source.localCache`
+freezes a content hash and byte count in the playback session, while retaining its HTTP(S)
+URL as fallback. Only the existing demux worker opens and verifies
+`/media/internal/pinpin-family/cache/<sha256>.mp4`; no global URL parser accepts file URLs.
+The fixed root and file reject symlinks, size is bounded to 128 MiB, and SHA-256 verification
+checks cancellation between 64 KiB reads. Verification and playback retain the same File.
+`Src::Local` uses the existing custom-AVIO read/seek/size and queue-abort rules, with no
+socket, curl handle or new Starfish/FFmpeg ABI. Missing or invalid cache falls back to the
+original network source before packets are emitted. Host tests prove byte handling and
+abort/EOF behavior, not native video decode or the absence of a visible transition.
+
 
 ## Threading model (this is the whole ballgame)
 

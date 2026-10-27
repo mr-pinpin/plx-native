@@ -32,7 +32,7 @@ impl Grant {
             &&[&self.video_url,&self.controls.input_url,&self.controls.heartbeat_url,&self.controls.stop_url]
                 .into_iter().all(|url|origin(url).is_some()&&origin(url)==origin(query))
     }
-    pub fn source(&self)->Source{Source{url:self.video_url.clone(),video_codec:self.vcodec.clone(),fps:self.fps,width:self.width,height:self.height,looping:false}}
+    pub fn source(&self)->Source{Source{url:self.video_url.clone(),local_cache:None,video_codec:self.vcodec.clone(),fps:self.fps,width:self.width,height:self.height,looping:false}}
     pub fn input(&self)->Option<super::family_input::Config>{serde_json::from_value(serde_json::json!({"inputURL":self.controls.input_url})).ok()}
 }
 pub(crate) enum Change {Ready(Grant),Passive}
