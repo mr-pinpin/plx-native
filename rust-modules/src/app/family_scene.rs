@@ -132,7 +132,10 @@ mod tests {
         let value=serde_json::json!({"sessionId":"session-1","scene":"atlas","state":"ready","videoURL":"http://192.0.2.1:4188/video.ts?cap=example","vcodec":"h264","fps":30,"width":1920,"height":1080,"videoOnly":true,"controls":{"inputURL":"http://192.0.2.1:4188/input","heartbeatURL":"http://192.0.2.1:4188/heartbeat","stopURL":"http://192.0.2.1:4188/stop"}});
         let mut grant:Grant=serde_json::from_value(value).unwrap();assert!(grant.valid("http://192.0.2.1:4188/query"));
         grant.controls.stop_url="http://192.0.2.2:4188/stop".into();assert!(!grant.valid("http://192.0.2.1:4188/query"));
-        grant.controls.stop_url="http://192.0.2.1:4188/stop".into();grant.fps=60.0;assert!(!grant.valid("http://192.0.2.1:4188/query"));
+        grant.controls.stop_url="http://192.0.2.1:4188/stop".into();grant.fps=60.0;assert!(grant.valid("http://192.0.2.1:4188/query"));
+        grant.fps=61.0;assert!(!grant.valid("http://192.0.2.1:4188/query"));
+        grant.fps=120.0;assert!(!grant.valid("http://192.0.2.1:4188/query"));
+        grant.fps=60.0;grant.video_only=false;assert!(!grant.valid("http://192.0.2.1:4188/query"));
     }
     #[test]
     fn a_late_start_after_background_is_retired_without_becoming_visible(){

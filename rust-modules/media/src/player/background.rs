@@ -26,7 +26,7 @@ impl Source {
             && matches!(self.video_codec.as_str(),"h264"|"hevc"|"h265")
             && self.fps.is_finite() && self.fps>0.0 && self.fps<=60.0
             && self.width>0 && self.height>0 && self.width<=4096 && self.height<=2176
-            && (self.video_codec!="h264"||self.fps<=30.0)
+            && (self.video_codec!="h264"||self.fps<=30.0||(self.width<=1920&&self.height<=1088))
     }
 }
 /// Called only with no engine installed. The complete declaration is published before any Load.
@@ -77,6 +77,11 @@ mod tests{
         assert!(source.valid());source.fps=240.0;assert!(!source.valid());
         source.fps=60.0;source.video_codec="h264".into();assert!(!source.valid());
         source.fps=30.0;assert!(source.valid());
+        source.width=1920;source.height=1080;source.fps=60.0;assert!(source.valid());
+        source.height=1088;assert!(source.valid());
+        source.fps=61.0;assert!(!source.valid());source.fps=120.0;assert!(!source.valid());
+        source.fps=60.0;source.width=1921;assert!(!source.valid());
+        source.width=1920;source.height=1089;assert!(!source.valid());
     }
     #[test]
     fn local_cache_is_opt_in_and_never_turns_url_validation_into_file_access(){
