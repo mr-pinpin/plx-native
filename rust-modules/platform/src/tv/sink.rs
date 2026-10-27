@@ -63,6 +63,8 @@ pub trait VideoSink: Sync {
     unsafe fn is_load_completed(&self, mt: &MainThread) -> c_int;
     unsafe fn play(&self, mt: &MainThread) -> c_int;
     unsafe fn pause(&self, mt: &MainThread) -> c_int;
+    /// Optional positive native clock rate, in thousandths. Refusal leaves existing playback unchanged.
+    unsafe fn set_play_rate(&self, _mt: &MainThread, _milli_rate: c_int) -> c_int { 0 }
     /// This pipeline's output volume, 0..100 (`StarfishMediaAPIs::setVolume`), applied at once. The
     /// paused-preroll mute; the library's bool proves nothing. Per pipeline, so a fresh `load`
     /// starts at [`PIPELINE_DEFAULT_VOLUME`] again. There is no getter: `getVolume` returns an int

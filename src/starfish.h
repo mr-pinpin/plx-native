@@ -21,6 +21,7 @@ int  sf_ready(void);
 int  sf_is_load_completed(void);
 int  sf_play(void);
 int  sf_pause(void);
+int  sf_set_play_rate(int milli_rate); /* optional positive rate 250..2000; 0 = absent/refused */
 int  sf_set_volume(int volume);  /* this pipeline's volume 0..100 (setVolume {"volume":n}); library bool */
 int  sf_flush(void);
 int  sf_set_time_to_decode(long long position_ns); /* Kodi in-place seek: setTimeToDecode (returns 0 on webOS<11) */

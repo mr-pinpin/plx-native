@@ -3,11 +3,11 @@ use plx_media::player::background::Source;
 use plx_screens::family_home::Application;
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct Config {version:u32,#[serde(default,rename="pointerDirectionVideo")]pointer_direction_video:bool,#[serde(default,rename="warmBackgroundTrial")]warm_background_trial:bool,#[serde(default,rename="pointerShuttle")]pointer_shuttle:bool,#[serde(default,rename="pointerDiagnostics")]pointer_diagnostics:bool,pub background:Option<Source>,apps:Vec<ApplicationConfig>,#[serde(default)] controls:Option<super::family_input::Config>,#[serde(default)] rendering:Option<super::family_scene::Config>,#[serde(default,rename="cover")] _retired_cover:Option<String>}
+pub(crate) struct Config {version:u32,#[serde(default,rename="pointerDirectionRate")]pointer_direction_rate:bool,#[serde(default,rename="pointerDirectionVideo")]pointer_direction_video:bool,#[serde(default,rename="warmBackgroundTrial")]warm_background_trial:bool,#[serde(default,rename="pointerShuttle")]pointer_shuttle:bool,#[serde(default,rename="pointerDiagnostics")]pointer_diagnostics:bool,pub background:Option<Source>,apps:Vec<ApplicationConfig>,#[serde(default)] controls:Option<super::family_input::Config>,#[serde(default)] rendering:Option<super::family_scene::Config>,#[serde(default,rename="cover")] _retired_cover:Option<String>}
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ApplicationConfig{id:String,title:String,#[serde(default)] icon:Option<String>,#[serde(default)] scene:Option<String>,#[serde(skip)] pixels:Option<plx_ui::owned_image::Pixels>}
-pub(crate) struct Runtime {config:Config,direction:super::family_direction::Direction,shuttle:super::family_shuttle::Shuttle,trace_input_at:Option<u32>,trace_action_at:Option<u32>,trace_state_at:Option<u32>,retry_at:u32,status_at:u32,snapshot_at:u32,snapshot:Option<Snapshot>,snapshot_requested:u32,worker:Option<std::sync::mpsc::Receiver<(u32,Option<Snapshot>)>>,input:Option<super::family_input::Bridge>,scene_click:bool,scene:Option<super::family_scene::Controller>,managed:Option<Source>,foreground:bool,wake:bool,presentation_sent:Option<bool>}
+pub(crate) struct Runtime {config:Config,rate:super::family_direction::RateOwner<plx_media::route::RouteStartAttempt>,direction:super::family_direction::Direction,shuttle:super::family_shuttle::Shuttle,trace_input_at:Option<u32>,trace_action_at:Option<u32>,trace_state_at:Option<u32>,retry_at:u32,status_at:u32,snapshot_at:u32,snapshot:Option<Snapshot>,snapshot_requested:u32,worker:Option<std::sync::mpsc::Receiver<(u32,Option<Snapshot>)>>,input:Option<super::family_input::Bridge>,scene_click:bool,scene:Option<super::family_scene::Controller>,managed:Option<Source>,foreground:bool,wake:bool,presentation_sent:Option<bool>}
 impl Config {
     pub fn load()->Result<Self,String>{
         use std::io::Read;
@@ -16,7 +16,7 @@ impl Config {
         let mut bytes=Vec::new();file.take(32769).read_to_end(&mut bytes).map_err(|_|"family configuration unreadable")?;
         if bytes.len()>32768{return Err("family configuration oversized".into());}
         let mut config:Self=serde_json::from_slice(&bytes).map_err(|_|"family configuration invalid")?;
-        if ((config.pointer_shuttle||config.pointer_direction_video)&&!config.background.as_ref().is_some_and(|source|source.looping))||config.rendering.as_ref().is_some_and(|rendering|!rendering.valid())||config.version!=1||!(1..=5).contains(&config.apps.len())||config.apps.iter().map(|app|&app.id).collect::<std::collections::BTreeSet<_>>().len()!=config.apps.len()||config.apps.iter().any(|app|app.id.is_empty()||app.id.len()>128
+        if (config.pointer_direction_rate&&!config.pointer_direction_video)||((config.pointer_shuttle||config.pointer_direction_video)&&!config.background.as_ref().is_some_and(|source|source.looping))||config.rendering.as_ref().is_some_and(|rendering|!rendering.valid())||config.version!=1||!(1..=5).contains(&config.apps.len())||config.apps.iter().map(|app|&app.id).collect::<std::collections::BTreeSet<_>>().len()!=config.apps.len()||config.apps.iter().any(|app|app.id.is_empty()||app.id.len()>128
             ||!app.id.bytes().all(|c|c.is_ascii_alphanumeric()||c==b'.'||c==b'-'||c==b'_')||app.title.is_empty()||app.title.len()>80
             ||app.title.chars().any(char::is_control)||app.scene.as_ref().is_some_and(|scene|!super::family_scene::scene_id(scene)||config.rendering.is_none()))||config.background.as_ref().is_some_and(|source|!source.valid())||config.controls.as_ref().is_some_and(|controls|!controls.valid(config.background.as_ref().map(|source|source.url.as_str()))){
             return Err("family configuration rejected".into());
@@ -25,7 +25,7 @@ impl Config {
         Ok(config)
     }
     pub fn applications(&self)->Vec<Application>{self.apps.iter().map(|app|Application{id:app.id.clone(),title:app.title.clone(),icon:app.pixels.clone()}).collect()}
-    pub fn empty()->Self{Self{version:1,pointer_direction_video:false,warm_background_trial:false,pointer_shuttle:false,pointer_diagnostics:false,background:None,apps:Vec::new(),controls:None,rendering:None,_retired_cover:None}}
+    pub fn empty()->Self{Self{version:1,pointer_direction_rate:false,pointer_direction_video:false,warm_background_trial:false,pointer_shuttle:false,pointer_diagnostics:false,background:None,apps:Vec::new(),controls:None,rendering:None,_retired_cover:None}}
 }
 impl Runtime {
     pub fn warm_background_trial(&self)->bool{self.config.warm_background_trial}
@@ -33,7 +33,7 @@ impl Runtime {
     pub fn immersive(&self)->bool{self.scene.as_ref().is_some_and(super::family_scene::Controller::immersive)}
     pub fn take_presentation(&mut self)->Option<bool>{let immersive=self.immersive();if self.presentation_sent==Some(immersive){None}else{self.presentation_sent=Some(immersive);Some(immersive)}}
     pub fn application(&self,index:u8)->Option<&str>{self.config.apps.get(index as usize).map(|app|app.id.as_str())}
-    pub fn new(mut config:Config)->Self{let scene=config.rendering.take().map(super::family_scene::Controller::new);let input=if config.pointer_shuttle||config.pointer_direction_video{None}else{config.controls.as_ref().and_then(super::family_input::Bridge::start)};Self{config,direction:Default::default(),shuttle:Default::default(),trace_input_at:None,trace_action_at:None,trace_state_at:None,retry_at:0,status_at:0,snapshot_at:0,snapshot:None,snapshot_requested:0,worker:None,input,scene_click:false,scene,managed:None,foreground:false,wake:false,presentation_sent:None}}
+    pub fn new(mut config:Config)->Self{let scene=config.rendering.take().map(super::family_scene::Controller::new);let input=if config.pointer_shuttle||config.pointer_direction_video{None}else{config.controls.as_ref().and_then(super::family_input::Bridge::start)};Self{config,rate:Default::default(),direction:Default::default(),shuttle:Default::default(),trace_input_at:None,trace_action_at:None,trace_state_at:None,retry_at:0,status_at:0,snapshot_at:0,snapshot:None,snapshot_requested:0,worker:None,input,scene_click:false,scene,managed:None,foreground:false,wake:false,presentation_sent:None}}
     pub fn launch_scene(&mut self,index:u8)->bool{
         let Some(scene)=self.config.apps.get(index as usize).and_then(|app|app.scene.as_deref())else{return false;};
         if let Some(controller)=&mut self.scene{controller.select(scene);true}else{false}
@@ -125,7 +125,16 @@ impl Runtime {
             let ready=!plx_media::player::loading(ps)&&plx_media::player::seek_pending()<0&&!plx_media::player::seek_preroll_active()&&plx_media::player::seen_frame();
             let action=self.direction.step(now,ready,plx_media::player::lifecycle::paused(),plx_media::player::playpos_ns(),plx_media::player::duration_ns(),source.fps);
             if self.config.pointer_diagnostics&&!matches!(action,super::family_direction::Action::None){plx_base::eventlog::log(&format!("family direction action={action:?} ready={ready} pos={} duration={} owned={}",plx_media::player::playpos_ns(),plx_media::player::duration_ns(),self.direction.owned(now)));}
-            match action{super::family_direction::Action::Seek(target)=>plx_media::player::request_seek(target),super::family_direction::Action::Resume=>{let _=plx_media::player::resume(pa);},super::family_direction::Action::None=>{}}
+            let seeking=matches!(action,super::family_direction::Action::Seek(_));
+            match action{super::family_direction::Action::Pause=>{let _=plx_media::player::pause(pa);},super::family_direction::Action::Seek(target)=>{self.rate.invalidate_after_seek();plx_media::player::request_seek(target);},super::family_direction::Action::Resume=>{let _=plx_media::player::resume(pa);},super::family_direction::Action::None=>{}}
+            if self.config.pointer_direction_rate&&ready&&!seeking{
+                let owner=pa.engine().map(|engine|engine.route_start);
+                if let Some(rate)=self.rate.plan(owner,self.direction.rate_milli(now),now){
+                    let accepted=plx_media::player::set_background_rate(ps,pa,rate);self.rate.acknowledge(rate,accepted);
+                    if !accepted&&rate!=1000{let reset=plx_media::player::set_background_rate(ps,pa,1000);plx_base::eventlog::log(&format!("family direction rate refused; baseline reset admitted={reset}"));}
+                    plx_base::eventlog::log(&format!("family direction rate={} accepted={} (native clock effect requires PTS measurement)",rate,accepted));
+                }
+            }
         }
         let looping_locally=direction_local||(plx_media::route::is_background(ps)&&plx_media::player::background::maintain_loop(ps,source,self.shuttle.blocks_loop()));
         if !looping_locally&&plx_media::player::ended()&&plx_media::route::is_background(ps)&&source.looping{

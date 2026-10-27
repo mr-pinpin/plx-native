@@ -38,6 +38,7 @@ mod sys {
         pub(super) fn sf_is_load_completed() -> c_int;
         pub(super) fn sf_play() -> c_int;
         pub(super) fn sf_pause() -> c_int;
+        pub(super) fn sf_set_play_rate(milli_rate: c_int) -> c_int;
         pub(super) fn sf_set_volume(volume: c_int) -> c_int;
         pub(super) fn sf_flush() -> c_int;
         pub(super) fn sf_push_eos() -> c_int;
@@ -112,6 +113,9 @@ impl plx_platform::tv::sink::VideoSink for StarfishSink {
         sys::sf_pause()
     }
     #[inline]
+    unsafe fn set_play_rate(&self, _: &MainThread, milli_rate: c_int) -> c_int {
+        sys::sf_set_play_rate(milli_rate)
+    }
     unsafe fn set_volume(&self, _: &MainThread, volume: c_int) -> c_int {
         sys::sf_set_volume(volume)
     }

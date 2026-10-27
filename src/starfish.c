@@ -5,6 +5,7 @@
 #include "starfish.h"
 #include <dlfcn.h>
 #include <pthread.h>
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -578,6 +579,21 @@ int sf_set_volume(int volume) {
     char json[32];
     snprintf(json, sizeof json, "{\"volume\":%d}", volume);
     return SMP_setVolume(object, json) & 0xff;   /* bool in r0: only the low byte is defined */
+}
+/* Optional public verb. NDK bool(const char*); actual 33.31.75 libplayerAPIs SHA
+ * c7abd7c49d56ff8b84549ae9295974faf1c912698ef1c864446a8b174a0f8471,
+ * SetPlayRate@0x3e32c parses audioOutput(bool)/playRate(float), then returns the
+ * pipeline virtual result. No object layout or floating-point calling ABI is assumed. */
+int sf_set_play_rate(int milli_rate) {
+    void *object = sf_ready_object();
+    if (!object || milli_rate < 250 || milli_rate > 2000) return 0;
+    typedef bool (*SetPlayRateFn)(void *, const char *);
+    SetPlayRateFn call = (SetPlayRateFn)dlsym(RTLD_DEFAULT, "_ZN17StarfishMediaAPIs11SetPlayRateEPKc");
+    if (!call) return 0;
+    char json[64];
+    /* Integer formatting is locale independent, including the mandatory decimal point. */
+    snprintf(json, sizeof json, "{\"playRate\":%d.%03d,\"audioOutput\":false}", milli_rate / 1000, milli_rate % 1000);
+    return call(object, json) ? 1 : 0;
 }
 int sf_pause(void) {
     void *object = sf_ready_object();

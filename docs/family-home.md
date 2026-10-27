@@ -44,16 +44,36 @@ experiment for a specifically prepared local asset: 120 seconds forward, the
 same 3600 frames in reverse order, then four seconds of priming padding (244
 seconds at 30 fps). It takes priority over the older shuttle and requires the
 actual verified-local decoder; managed scenes retain their own controls. Normal
-native Play runs uninterrupted between direction changes. Accumulated horizontal
-cursor displacement of 0.005 normalized units selects left/reverse or right/forward,
-rather than selecting by cursor position on the screen. Small alternating jitter
-is filtered; vertical movement keeps the last direction. A real sign change
-requests one mirrored seek using the current landed PTS. Changes received while
-loading or seeking coalesce until ready. Each direction loops within its own
-120-second segment. One second without actual XY motion releases input ownership
-but does not pause the video or change its last direction. This uses pre-encoded
-frames and ordinary seek/Play; it does not introduce a negative-rate decoder API.
-The media contract and visible transition quality require device acceptance.
+native Play runs uninterrupted between direction changes. Absolute normalized
+cursor X selects direction: left is reverse, right is forward. The centre enters
+hold within 0.06 of 0.5 and leaves hold only beyond 0.08, preventing jitter from
+alternating transport state. A stationary valid position remains authoritative.
+A sign change requests one mirrored seek using the current landed PTS; changes
+received while loading or seeking coalesce until ready. Each direction loops
+within its own 120-second segment. Releasing pointer ownership resumes ambient
+1× in the last selected direction. Only an explicit centre hold pauses playback.
+No negative-rate decoder API is used.
+
+The additional default-off `pointerDirectionRate: true` requires direction mode.
+It maps distance from the centre to positive 0.25–2× native playback rate; the
+pre-encoded segment supplies direction. Changes are coalesced to at most ten
+calls per second and slew by at most 0.25× per update; releasing ownership restores
+1×. A seek invalidates the remembered applied rate. Missing/refused capability
+is latched per exact Load, with a single baseline-reset attempt after refusal.
+An accepted method return is admission evidence, not a measured clock rate.
+Actual native PTS/frame progression must establish the effect before enabling it
+on a household deployment.
+
+The optional C seam uses `bool SetPlayRate(const char*)` from the pinned NDK's
+[Starfish header](https://www.webosbrew.org/webos-userland/d3/dda/StarfishMediaAPIs_8h_source.html).
+Manual compatibility review found the exact mangled symbol in all fourteen cached
+firmware inventories and in the actual 33.31.75 library. The actual ELF SHA-256 is
+`c7abd7c49d56ff8b84549ae9295974faf1c912698ef1c864446a8b174a0f8471`:
+`SetPlayRate` at `0x3e32c` parses `audioOutput` as boolean and `playRate` as float,
+then returns its pipeline virtual method's boolean result. The adapter sends
+locale-independent integer-formatted `{playRate:R,audioOutput:false}` JSON;
+no object offset, new library dependency or floating-point C++ call is introduced.
+The inventory establishes symbol availability, not behavior on every firmware.
 
 The top-level `pointerShuttle: true` optionally steers this passive looping
 background through existing native pause, absolute-seek and resume operations.
