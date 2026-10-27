@@ -35,19 +35,21 @@ impl Grant {
     pub fn input(&self)->Option<super::family_input::Config>{serde_json::from_value(serde_json::json!({"inputURL":self.controls.input_url})).ok()}
 }
 pub(crate) enum Change {Ready(Grant),Passive}
-enum Reply {Start(Option<Grant>),Heartbeat(bool),Stopped}
+#[derive(Clone,Copy,Debug,PartialEq,Eq)]
+enum Heartbeat {Healthy,Transient,Fatal}
+enum Reply {Start(Option<Grant>),Heartbeat(Heartbeat),Stopped}
 pub(crate) struct Controller {
     config:Config,desired:Option<String>,active:Option<Grant>,pending:Option<Receiver<Reply>>,
-    stops:Vec<Grant>,foreground:bool,next:u32,
+    stops:Vec<Grant>,foreground:bool,next:u32,heartbeat_misses:u8,heartbeat_since:Option<u32>,
 }
 impl Controller {
-    pub fn new(config:Config)->Self{Self{desired:Some(config.scene.clone()),config,active:None,pending:None,stops:Vec::new(),foreground:false,next:super::clock::now()}}
+    pub fn new(config:Config)->Self{Self{desired:Some(config.scene.clone()),config,active:None,pending:None,stops:Vec::new(),foreground:false,next:super::clock::now(),heartbeat_misses:0,heartbeat_since:None}}
     pub fn immersive(&self)->bool{self.active.as_ref().is_some_and(|grant|grant.scene!=self.config.scene)}
     pub fn select(&mut self,scene:&str){if scene_id(scene){self.desired=Some(scene.into());self.next=super::clock::now();}}
     pub fn home(&mut self)->bool{
         if self.desired.as_deref().is_some_and(|scene|scene!=self.config.scene){let scene=self.config.scene.clone();self.select(&scene);true}else{false}
     }
-    fn retire(&mut self){if let Some(grant)=self.active.take(){self.stops.push(grant);}}
+    fn retire(&mut self){self.heartbeat_misses=0;self.heartbeat_since=None;if let Some(grant)=self.active.take(){self.stops.push(grant);}}
     fn accept(&mut self,reply:Reply,foreground:bool)->Option<Change>{
         match reply {
             Reply::Start(Some(grant)) if foreground&&self.desired.as_deref()==Some(grant.scene.as_str())=>{
@@ -58,12 +60,28 @@ impl Controller {
                 self.retire();self.next=super::clock::now().wrapping_add(5000);
                 Some(Change::Passive)
             },
-            Reply::Heartbeat(false)=>{
-                self.failed();
-                Some(Change::Passive)
-            },
-            Reply::Heartbeat(true)=>{
-                self.next=super::clock::now().wrapping_add(if self.active.as_ref().is_some_and(|grant|self.desired.as_deref()==Some(grant.scene.as_str())){10000}else{0});None
+            Reply::Heartbeat(outcome)=>{
+                // A retired/backgrounded session cannot turn a late control reply into a route change.
+                if !foreground||self.active.is_none(){return None;}
+                let now=super::clock::now();
+                match outcome {
+                    Heartbeat::Healthy=>{
+                        self.heartbeat_misses=0;self.heartbeat_since=None;
+                        self.next=now.wrapping_add(if self.active.as_ref().is_some_and(|grant|self.desired.as_deref()==Some(grant.scene.as_str())){10000}else{0});None
+                    },
+                    Heartbeat::Transient=>{
+                        // The manager's verified TTL is 30s; normal HB is 10s. A bounded retry
+                        // preserves healthy media through one lost control packet, never indefinitely.
+                        self.heartbeat_misses=self.heartbeat_misses.saturating_add(1);
+                        let since=*self.heartbeat_since.get_or_insert(now);
+                        if self.heartbeat_misses>=3||now.wrapping_sub(since)>=5000 {
+                            self.failed();Some(Change::Passive)
+                        }else{
+                            self.next=now.wrapping_add(if self.active.as_ref().is_some_and(|grant|self.desired.as_deref()==Some(grant.scene.as_str())){1000}else{0});None
+                        }
+                    },
+                    Heartbeat::Fatal=>{self.failed();Some(Change::Passive)},
+                }
             },
             Reply::Stopped=>None,
         }
@@ -73,7 +91,7 @@ impl Controller {
         if !foreground&&self.foreground{self.desired=None;self.retire();change=Some(Change::Passive);}
         if foreground&&!self.foreground{self.desired=Some(self.config.scene.clone());self.next=super::clock::now();}
         self.foreground=foreground;
-        let reply=self.pending.as_ref().and_then(|recv|match recv.try_recv(){Ok(reply)=>Some(reply),Err(TryRecvError::Disconnected)=>Some(Reply::Heartbeat(false)),Err(TryRecvError::Empty)=>None});
+        let reply=self.pending.as_ref().and_then(|recv|match recv.try_recv(){Ok(reply)=>Some(reply),Err(TryRecvError::Disconnected)=>Some(if self.active.is_some(){Reply::Heartbeat(Heartbeat::Transient)}else{Reply::Start(None)}),Err(TryRecvError::Empty)=>None});
         if let Some(reply)=reply {
             self.pending=None;
             change=self.accept(reply,foreground).or(change);
@@ -103,22 +121,32 @@ fn worker(job:impl FnOnce()->Reply+Send+'static)->Option<Receiver<Reply>>{
     let (send,recv)=std::sync::mpsc::sync_channel(1);
     plx_base::task::spawn_small("shared scene",move||{let _=send.send(job());}).then_some(recv)
 }
-fn request(url:&str,body:serde_json::Value,millis:u16)->Option<serde_json::Value>{
-    let body=serde_json::to_vec(&body).ok()?;
+fn request(url:&str,body:serde_json::Value,millis:u16)->Result<serde_json::Value,Heartbeat>{
+    let body=serde_json::to_vec(&body).map_err(|_|Heartbeat::Fatal)?;
     let timeout=plx_net::net::Timeouts{connect_s:2,total_s:20,total_ms:millis.into(),low_speed_bps:0,low_speed_s:0};
-    let response=plx_net::net::request(url,&["Content-Type: application/json".into()],"POST",Some(&body),timeout,false,Some(16384),None)?;
-    if !response.ok(){return None;}
-    let value:serde_json::Value=serde_json::from_slice(&response.body).ok()?;
-    (value["ok"].as_bool()==Some(true)).then_some(value)
+    let response=plx_net::net::request(url,&["Content-Type: application/json".into()],"POST",Some(&body),timeout,false,Some(16384),None).ok_or(Heartbeat::Transient)?;
+    classify_response(response.status,&response.body)
 }
+fn classify_response(status:u16,body:&[u8])->Result<serde_json::Value,Heartbeat>{
+    if status==408||status==429||(500..600).contains(&status){return Err(Heartbeat::Transient);}
+    if !(200..300).contains(&status){return Err(Heartbeat::Fatal);}
+    let value:serde_json::Value=serde_json::from_slice(body).map_err(|_|Heartbeat::Fatal)?;
+    if value["ok"].as_bool()!=Some(true){return Err(Heartbeat::Fatal);}
+    Ok(value)
+}
+
 fn start(query:&str,scene:&str)->Option<Grant>{
-    let value=request(query,serde_json::json!({"kind":"render.scene.start","params":{"scene":scene,"viewer":"family-home"}}),20000)?;
+    let value=request(query,serde_json::json!({"kind":"render.scene.start","params":{"scene":scene,"viewer":"family-home"}}),20000).ok()?;
     let grant:Grant=serde_json::from_value(value["value"].clone()).ok()?;
     (grant.scene==scene&&grant.valid(query)).then_some(grant)
 }
-fn session_request(grant:&Grant,kind:&str)->bool{
+fn session_request(grant:&Grant,kind:&str)->Heartbeat{
     let url=if kind=="render.scene.stop"{&grant.controls.stop_url}else{&grant.controls.heartbeat_url};
-    request(url,serde_json::json!({"kind":kind,"params":{"sessionId":grant.session_id}}),1000).is_some()
+    match request(url,serde_json::json!({"kind":kind,"params":{"sessionId":grant.session_id}}),1000){
+        Ok(value) if kind=="render.scene.stop"||(value["value"]["sessionId"].as_str()==Some(grant.session_id.as_str())&&value["value"]["state"].as_str()==Some("ready"))=>Heartbeat::Healthy,
+        Ok(_)=>Heartbeat::Fatal,
+        Err(outcome)=>outcome,
+    }
 }
 
 #[cfg(test)]
@@ -126,6 +154,51 @@ mod tests {
     use super::*;
     fn grant(scene:&str)->Grant{Grant{session_id:"test-session".into(),scene:scene.into(),state:"ready".into(),video_url:"http://192.0.2.1:4188/video.ts".into(),vcodec:"h264".into(),fps:30.0,width:1920,height:1080,video_only:true,controls:Controls{input_url:"http://192.0.2.1:4188/input".into(),heartbeat_url:"http://192.0.2.1:4188/heartbeat".into(),stop_url:"http://192.0.2.1:4188/stop".into()}}}
     fn controller()->Controller{Controller::new(Config{query_url:"http://192.0.2.1:4188/query".into(),scene:"forest".into()})}
+    #[test]
+    fn one_control_timeout_preserves_scene_and_recovery_resets_grace(){
+        super::super::clock::set_replay(100);
+        let mut c=controller();c.select("atlas");c.active=Some(grant("atlas"));
+        assert!(c.accept(Reply::Heartbeat(Heartbeat::Transient),true).is_none());
+        assert!(c.active.is_some());assert_eq!(c.desired.as_deref(),Some("atlas"));assert_eq!(c.next,1100);assert!(c.stops.is_empty());
+        assert!(c.accept(Reply::Heartbeat(Heartbeat::Healthy),true).is_none());
+        assert_eq!(c.heartbeat_misses,0);assert_eq!(c.heartbeat_since,None);
+        assert!(c.accept(Reply::Heartbeat(Heartbeat::Transient),true).is_none());assert_eq!(c.heartbeat_misses,1);
+        super::super::clock::set_replay(0);
+    }
+    #[test]
+    fn repeated_timeouts_or_elapsed_grace_yield_home_once(){
+        let mut c=controller();c.select("atlas");c.active=Some(grant("atlas"));
+        for _ in 0..2{assert!(c.accept(Reply::Heartbeat(Heartbeat::Transient),true).is_none());}
+        assert!(matches!(c.accept(Reply::Heartbeat(Heartbeat::Transient),true),Some(Change::Passive)));
+        assert_eq!(c.desired.as_deref(),Some("forest"));assert_eq!(c.stops.len(),1);
+        assert!(c.accept(Reply::Heartbeat(Heartbeat::Fatal),true).is_none());assert_eq!(c.stops.len(),1);
+        super::super::clock::set_replay(u32::MAX-2000);
+        let mut c=controller();c.select("atlas");c.active=Some(grant("atlas"));
+        assert!(c.accept(Reply::Heartbeat(Heartbeat::Transient),true).is_none());
+        super::super::clock::set_replay(3000);
+        assert!(matches!(c.accept(Reply::Heartbeat(Heartbeat::Transient),true),Some(Change::Passive)));
+        super::super::clock::set_replay(0);
+    }
+    #[test]
+    fn heartbeat_retry_preserves_new_choice_and_background_retires_without_grace(){
+        let mut c=controller();c.active=Some(grant("atlas"));c.select("alambique");
+        assert!(c.accept(Reply::Heartbeat(Heartbeat::Transient),true).is_none());
+        assert_eq!(c.desired.as_deref(),Some("alambique"));
+        assert!(matches!(c.accept(Reply::Heartbeat(Heartbeat::Fatal),true),Some(Change::Passive)));
+        assert_eq!(c.desired.as_deref(),Some("alambique"));
+        let mut c=controller();c.active=Some(grant("atlas"));c.foreground=true;
+        c.desired=None;c.retire();
+        assert!(c.active.is_none());assert_eq!(c.stops.len(),1);
+        assert!(c.accept(Reply::Heartbeat(Heartbeat::Transient),false).is_none());
+    }
+    #[test]
+    fn control_http_classification_retries_only_transient_failure(){
+        for status in [408,429,500,502,503,504]{assert_eq!(classify_response(status,b""),Err(Heartbeat::Transient));}
+        for status in [400,401,403,404,410]{assert_eq!(classify_response(status,b""),Err(Heartbeat::Fatal));}
+        assert_eq!(classify_response(200,b"not JSON"),Err(Heartbeat::Fatal));
+        assert_eq!(classify_response(200,br#"{"ok":false}"#),Err(Heartbeat::Fatal));
+        assert!(classify_response(200,br#"{"ok":true,"value":{"state":"ready"}}"#).is_ok());
+    }
     #[test]
     fn registry_and_grants_reject_unrequested_scene_or_cross_origin_capabilities(){
         assert!(scene_id("atlas"));assert!(!scene_id("../../shell"));
@@ -165,8 +238,8 @@ mod tests {
     #[test]
     fn scene_change_during_heartbeat_survives_old_failure_and_can_return_home(){
         let mut controller=controller();controller.active=Some(grant("forest"));controller.select("atlas");
-        controller.accept(Reply::Heartbeat(true),true);assert!(controller.next<=super::super::clock::now());
-        assert!(matches!(controller.accept(Reply::Heartbeat(false),true),Some(Change::Passive)));
+        controller.accept(Reply::Heartbeat(Heartbeat::Healthy),true);assert!(controller.next<=super::super::clock::now());
+        assert!(matches!(controller.accept(Reply::Heartbeat(Heartbeat::Fatal),true),Some(Change::Passive)));
         assert!(controller.active.is_none());assert_eq!(controller.desired.as_deref(),Some("atlas"));assert_eq!(controller.stops.len(),1);
         assert!(controller.home());assert!(!controller.home());
     }
@@ -186,7 +259,7 @@ mod tests {
     #[test]
     fn lost_active_scene_heartbeat_also_yields_to_home_once(){
         let mut controller=controller();controller.select("atlas");controller.active=Some(grant("atlas"));
-        assert!(matches!(controller.accept(Reply::Heartbeat(false),true),Some(Change::Passive)));
+        assert!(matches!(controller.accept(Reply::Heartbeat(Heartbeat::Fatal),true),Some(Change::Passive)));
         assert_eq!(controller.desired.as_deref(),Some("forest"));assert_eq!(controller.stops.len(),1);
     }
 }

@@ -153,3 +153,5 @@ This does not add a new Home key hook: SAM may treat Home as a no-op while Famil
 is already foreground. Ordinary forest presentation keeps the configured dock.
 
 Managed interactive scene grants use a Load-local live clock: undecodable access units before the first keyframe are discarded, and that keyframe is fed at zero while later timestamp intervals remain intact. The join does not arm seek priming. Ordinary background JSON, local movies and HLS retain their existing content clock; disabling looping alone never opts a source into live timing.
+
+A managed scene's media is not retired for a single transient control-channel timeout. Heartbeats normally run every ten seconds against the manager's thirty-second lease. Transport failures, HTTP 408/429 and 5xx retry after one second, capped at three misses or five seconds from the first miss. A successful heartbeat resets the grace. Gone/denied sessions or malformed acknowledgements still fall back once immediately; explicit background/stop does not wait for this grace.
