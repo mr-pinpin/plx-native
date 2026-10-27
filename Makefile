@@ -1148,7 +1148,9 @@ ICONS     = $(if $(filter stable,$(FLAVOR)),pkg/icon.png pkg/largeIcon.png,$(ICO
 # a Cloud Test Lab set has no ssh and the package is the only channel into it. GITIGNORED, 0600,
 # and in `.claude/hooks/outbound-guard.py`'s PRIVATE_FILES — it carries a live credential.
 LAB_FILES = $(if $(LAB),pkg/lab.json,)
-APP_FILES = pkg/plxnative $(SENTRY_HANDLER) $(APPINFO) $(ICONS) pkg/splash.png \
+# Cinema editions share the packaged basename but carry their own commissioned splash art.
+SPLASH = $(if $(filter debug nightly,$(FLAVOR)),$(ICONDIR)/splash.png,pkg/splash.png)
+APP_FILES = pkg/plxnative $(SENTRY_HANDLER) $(APPINFO) $(ICONS) $(SPLASH) \
             pkg/appfont.ttf pkg/appfont-bold.ttf pkg/appfont-cjk.ttf pkg/appfont-emoji.ttf pkg/OFL.txt \
             pkg/le-roots.pem \
             THIRD-PARTY-NOTICES.md LICENSING.md \

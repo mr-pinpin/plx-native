@@ -50,3 +50,7 @@ Parents v2 removes only the two lower bucket-holding arms from v1, retaining one
 upper eating arm per parent. Its master and exports use the `-v2.png` suffix;
 `parents-provenance-v2.json` records the precise edit prompt and hashes. The
 original Kids files and Parents v1 remain unchanged.
+
+## Profile splash presentation
+
+The newly commissioned Parents splash uses the approved two-adult burgundy identity and the exact title “Cinema Parents”. Its unaltered generated master is `cinema-parents-splash-master-v1.png`; `parents-splash-provenance-v1.json` records the exact prompt, references and export hashes. Only a standard RGB Lanczos export produces `pkg/dev/splash.png`. Kids keeps the previously approved single-PinPin navy splash at `pkg/nightly/splash.png`. These specific new Parents branding files carry the same narrow GPL-3.0-or-later grant above, where project rights apply; no exclusive AI copyright or general book/character grant is asserted.

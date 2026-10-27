@@ -54,6 +54,22 @@ class DeployManifest(unittest.TestCase):
         names = [pathlib.Path(f).name for f in deploy_files]
         self.assertEqual(len(names), len(set(names)), names)
 
+    def test_cinema_editions_stage_their_own_splash_with_the_canonical_basename(self):
+        for flavor, source in [('debug', 'pkg/dev/splash.png'), ('nightly', 'pkg/nightly/splash.png'), ('stable', 'pkg/splash.png'), ('family', 'pkg/splash.png')]:
+            with self.subTest(flavor=flavor):
+                for target in ('print-app-files', 'print-deploy-files'):
+                    splashes=[p for p in make_print(target, flavor) if pathlib.Path(p).name == 'splash.png']
+                    self.assertEqual(splashes, [source])
+
+    def test_cinema_splash_images_are_distinct_full_hd_pngs(self):
+        import struct
+        parents=(ROOT/'pkg/dev/splash.png').read_bytes()
+        kids=(ROOT/'pkg/nightly/splash.png').read_bytes()
+        self.assertNotEqual(parents, kids)
+        for content in (parents,kids):
+            self.assertEqual(content[:8], b'\x89PNG\r\n\x1a\n')
+            self.assertEqual(struct.unpack('>II',content[16:24]), (1920,1080))
+
     def test_splash_and_notices_are_in_the_deployed_set(self):
         # The reported bug, pinned by name: these four were in APP_FILES/the .ipk and never
         # reached a deployed app directory.

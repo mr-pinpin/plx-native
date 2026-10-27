@@ -1,0 +1,42 @@
+{
+  "schema": 1,
+  "tool": "built-in image_gen",
+  "prompt": "Create a finished 16:9 widescreen television launch splash for the user's Cinema Parents application. Image1 is the approved EXACT Parents identity/style reference: TWO cheerful adult hedgehogs sharing popcorn, only their two upper eating arms, no lower arms gripping the bucket. Preserve these two adult character designs, warm golden fur/spines, red-and-cream striped popcorn bucket, rich burgundy backdrop. Image2 is ONLY the layout/style reference for the existing Kids splash: uncluttered centered art above large friendly cream/gold title. Produce the Parents counterpart: two adult hedgehogs and popcorn centered in upper/middle area, deep burgundy seamless background with generous safe dark margins; below them exact clean readable title on two lines 'Cinema' then 'Parents'. No other writing, no Plex/PlxNative marks, no extra limbs, no frame. Finished polished cozy 3D children's-book aesthetic consistent with the approved identity, landscape 1920x1080 composition.",
+  "references": [
+    {
+      "path": "assets/cinema/cinema-parents-icon-master-v2.png",
+      "role": "approved Parents identity/style",
+      "sha256": "690f83085bf3013b2e7f6d8dbb48e6355bbfdfa83f0f30fffba9c09a707e9704"
+    },
+    {
+      "path": "assets/cinema/cinema-splash-1920x1080-v1.png",
+      "role": "Kids splash layout/style only",
+      "sha256": "e82c11e60dd838e24a1dd5b97254cac33782e040f8b164137e74f1242c907aa4"
+    }
+  ],
+  "outputs": [
+    {
+      "path": "assets/cinema/cinema-parents-splash-master-v1.png",
+      "sha256": "3288475e6a14225aac6ca7a3a5def62d210517efb5223d445e93f310ffa9cb6d",
+      "width": 1672,
+      "height": 941,
+      "mode": "RGB"
+    },
+    {
+      "path": "pkg/dev/splash.png",
+      "sha256": "775649756fc49c8996ee2421f838736199ddaedf4722ea2e60018f1d39d2efe4",
+      "width": 1920,
+      "height": 1080,
+      "mode": "RGB"
+    },
+    {
+      "path": "pkg/nightly/splash.png",
+      "sha256": "e82c11e60dd838e24a1dd5b97254cac33782e040f8b164137e74f1242c907aa4",
+      "width": 1920,
+      "height": 1080,
+      "mode": "RGB"
+    }
+  ],
+  "derivatives": "Unaltered generated master; television export uses RGB Lanczos resize only. Kids copy is byte-identical to its previously approved splash.",
+  "licenseBoundary": "These specific new Cinema branding outputs carry the existing narrow GPL-3.0-or-later grant where project rights apply; no exclusive AI copyright or blanket book/reference/character grant."
+}
