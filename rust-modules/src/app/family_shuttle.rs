@@ -74,10 +74,12 @@ impl Shuttle {
         }
     }
     pub fn step(&mut self, now: u32, ready: bool, position: i64, duration: i64) -> Action {
+        let seek_span = plx_appkit::player_hud::scrub_clamp_target(duration, duration);
+        let anchor = plx_appkit::player_hud::scrub_clamp_target(position, duration);
         let point = self
             .pointer
             .filter(|(_, at)| now.wrapping_sub(*at) <= STALE_MS);
-        if point.is_none() || duration <= 0 || position < 0 {
+        if point.is_none() || duration <= 0 || seek_span <= 0 || position < 0 {
             self.pointer = None;
             self.last_tick = None;
             self.last_seek = None;
@@ -111,17 +113,19 @@ impl Shuttle {
             }
             self.last_pause = Some(now);
             self.holding = true;
-            self.target = Some(position as f64);
+            self.target = Some(anchor as f64);
             return Action::Pause;
         }
         let signed = (point.unwrap().0 as f64 - 0.5) * 2.0;
         if signed.abs() <= DEAD_ZONE {
-            self.target = Some(position as f64);
+            self.target = Some(anchor as f64);
             return Action::None;
         }
         let velocity = signed.signum() * (signed.abs() - DEAD_ZONE) / (1.0 - DEAD_ZONE) * MAX_SPEED;
-        let target = (self.target.unwrap_or(position as f64) + velocity * dt * 1e9)
-            .rem_euclid(duration as f64);
+        // Reuse the player's existing priming boundary. Ambient playback may reach
+        // natural EOF; a requested seek must never wrap into its unprimeable tail.
+        let target = (self.target.unwrap_or(anchor as f64) + velocity * dt * 1e9)
+            .rem_euclid(seek_span as f64);
         self.target = Some(target);
         // The desired clock belongs to the live gesture, not the decoder's quantized
         // landed PTS. Keep integrating bounded frame deltas while a seek is in flight;
@@ -136,7 +140,7 @@ impl Shuttle {
         {
             return Action::None;
         }
-        let target = target.round() as i64 % duration;
+        let target = target.round() as i64 % seek_span;
         if (target - position).abs() < 40_000_000 {
             return Action::None;
         }
@@ -148,6 +152,31 @@ impl Shuttle {
 mod tests {
     use super::*;
     const SECOND: i64 = 1_000_000_000;
+    #[test]
+    fn reverse_wrap_never_enters_the_shared_unprimeable_tail() {
+        let mut p = Shuttle::default();
+        p.pointer(Some(0.0), 1000);
+        p.step(1000, true, 100_000_000, 120 * SECOND);
+        let Action::Seek(target) = p.step(1100, true, 100_000_000, 120 * SECOND) else {
+            panic!("reverse wrap")
+        };
+        let safe_end = plx_appkit::player_hud::scrub_clamp_target(120 * SECOND, 120 * SECOND);
+        assert!(
+            target >= 0 && target <= safe_end,
+            "seek target {target} exceeds shared safe end {safe_end}"
+        );
+    }
+    #[test]
+    fn engaging_in_the_ambient_tail_reanchors_to_the_existing_safe_boundary() {
+        let mut p = Shuttle::default();
+        p.pointer(Some(0.0), 1000);
+        p.step(1000, true, 118 * SECOND, 120 * SECOND);
+        let cap = plx_appkit::player_hud::scrub_clamp_target(120 * SECOND, 120 * SECOND);
+        assert_eq!(
+            p.step(1100, true, 118 * SECOND, 120 * SECOND),
+            Action::Seek(cap - 800_000_000)
+        );
+    }
     #[test]
     fn active_pointer_keeps_its_virtual_timeline_while_decoder_is_busy() {
         let mut p = Shuttle::default();
@@ -240,7 +269,10 @@ mod tests {
         p.step(u32::MAX - 50, true, 100_000_000, 120 * SECOND);
         assert_eq!(
             p.step(49, true, 100_000_000, 120 * SECOND),
-            Action::Seek(119 * SECOND + 300_000_000)
+            Action::Seek(
+                plx_appkit::player_hud::scrub_clamp_target(120 * SECOND, 120 * SECOND)
+                    - 700_000_000
+            )
         );
     }
     #[test]
