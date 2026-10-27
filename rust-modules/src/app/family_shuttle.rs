@@ -24,9 +24,28 @@ pub(super) struct Shuttle {
 }
 impl Shuttle {
     pub fn pointer(&mut self, x: Option<f32>, now: u32) {
-        self.pointer = x
+        let next = x
             .filter(|x| x.is_finite())
             .map(|x| (x.clamp(0.0, 1.0), now));
+        let direction = |x: f32| {
+            let signed = (x as f64 - 0.5) * 2.0;
+            if signed.abs() <= DEAD_ZONE {
+                0
+            } else if signed < 0.0 {
+                -1
+            } else {
+                1
+            }
+        };
+        if next.is_some_and(|(x, _)| {
+            self.pointer.is_none_or(|(old, at)| {
+                now.wrapping_sub(at) > STALE_MS || direction(x) != direction(old)
+            })
+        }) {
+            self.target = None;
+            self.last_tick = Some(now);
+        }
+        self.pointer = next;
     }
     pub fn release(&mut self) {
         self.pointer = None;
@@ -71,11 +90,10 @@ impl Shuttle {
             .unwrap_or(0) as f64
             / 1000.0;
         self.last_tick = Some(now);
-        if !ready {
-            self.target = None;
-            return Action::None;
-        }
         if !self.holding {
+            if !ready {
+                return Action::None;
+            }
             if self
                 .last_pause
                 .is_some_and(|last| now.wrapping_sub(last) < SEEK_MS)
@@ -96,6 +114,13 @@ impl Shuttle {
         let target = (self.target.unwrap_or(position as f64) + velocity * dt * 1e9)
             .rem_euclid(duration as f64);
         self.target = Some(target);
+        // The desired clock belongs to the live gesture, not the decoder's quantized
+        // landed PTS. Keep integrating bounded frame deltas while a seek is in flight;
+        // only dispatch waits. Re-anchoring every busy frame reduced an eightfold
+        // gesture to one frame's movement and could repeatedly seek the same GOP.
+        if !ready {
+            return Action::None;
+        }
         if self
             .last_seek
             .is_some_and(|last| now.wrapping_sub(last) < SEEK_MS)
@@ -114,6 +139,34 @@ impl Shuttle {
 mod tests {
     use super::*;
     const SECOND: i64 = 1_000_000_000;
+    #[test]
+    fn active_pointer_keeps_its_virtual_timeline_while_decoder_is_busy() {
+        let mut p = Shuttle::default();
+        p.pointer(Some(1.0), 1000);
+        p.step(1000, true, 60 * SECOND, 120 * SECOND);
+        for now in [1100, 1200, 1300, 1400, 1500] {
+            assert_eq!(p.step(now, false, 60 * SECOND, 120 * SECOND), Action::None);
+        }
+        assert_eq!(
+            p.step(1600, true, 60 * SECOND, 120 * SECOND),
+            Action::Seek(64 * SECOND + 800_000_000)
+        );
+    }
+    #[test]
+    fn reversing_pointer_direction_reanchors_instead_of_replaying_old_backlog() {
+        let mut p = Shuttle::default();
+        p.pointer(Some(0.0), 1000);
+        p.step(1000, true, 60 * SECOND, 120 * SECOND);
+        p.step(1100, true, 60 * SECOND, 120 * SECOND);
+        for now in [1200, 1300, 1400] {
+            p.step(now, false, 59 * SECOND, 120 * SECOND);
+        }
+        p.pointer(Some(1.0), 1450);
+        assert_eq!(
+            p.step(1500, true, 59 * SECOND, 120 * SECOND),
+            Action::Seek(59 * SECOND + 400_000_000)
+        );
+    }
     #[test]
     fn centre_holds_and_release_resumes_ambient() {
         let mut p = Shuttle::default();
@@ -153,7 +206,8 @@ mod tests {
         p.step(1000, true, 60 * SECOND, 120 * SECOND);
         assert_eq!(p.step(1100, false, 60 * SECOND, 120 * SECOND), Action::None);
         p.pointer(Some(1.0), 10000);
-        let Action::Seek(target) = p.step(10000, true, 60 * SECOND, 120 * SECOND) else {
+        assert_eq!(p.step(10000, true, 60 * SECOND, 120 * SECOND), Action::None);
+        let Action::Seek(target) = p.step(10100, true, 60 * SECOND, 120 * SECOND) else {
             panic!("fresh edge")
         };
         assert!(target <= 60 * SECOND + 800_000_000);
