@@ -24,12 +24,12 @@ struct Packet {
 impl Packet {
     fn neutral()->Self{Self{kind:"input",pointer:[0.5,0.5],keys:Vec::new(),activate:false,zoom:0.0,engaged:false}}
 }
-struct Slot {packet:Packet,updated:u32,generation:u64,stop:bool}
+struct Slot {position:bool,packet:Packet,updated:u32,generation:u64,stop:bool}
 impl Slot {
-    fn new()->Self{Self{packet:Packet::neutral(),updated:super::clock::now(),generation:0,stop:false}}
+    fn new()->Self{Self{position:false,packet:Packet::neutral(),updated:super::clock::now(),generation:0,stop:false}}
     fn touch(&mut self){self.updated=super::clock::now();self.generation=self.generation.wrapping_add(1);}
     fn take(&mut self,now:u32)->(Packet,u64){
-        if now.wrapping_sub(self.updated)>750{self.packet=Packet::neutral();}
+        if !self.position&&now.wrapping_sub(self.updated)>750{self.packet=Packet::neutral();}
         let packet=self.packet.clone();self.packet.activate=false;self.packet.zoom=0.0;(packet,self.generation)
     }
 }
@@ -40,10 +40,16 @@ impl Bridge {
         Self::with_sender(move|packet|post_packet(&url,packet))
     }
 
+    pub fn start_position(config:&Config)->Option<Self>{let url=config.input_url.clone();Self::with_sender_policy(true,move|packet|post_packet(&url,packet))}
+
     #[cfg(test)]
     pub(super) fn for_test()->Self{Self::with_sender(|_|true).unwrap()}
     fn with_sender(send:impl Fn(&Packet)->bool+Send+'static)->Option<Self>{
-        let shared=Arc::new((Mutex::new(Slot::new()),Condvar::new()));let worker=Arc::clone(&shared);
+        Self::with_sender_policy(false,send)
+    }
+    fn with_sender_policy(position:bool,send:impl Fn(&Packet)->bool+Send+'static)->Option<Self>{
+        let mut initial=Slot::new();initial.position=position;
+        let shared=Arc::new((Mutex::new(initial),Condvar::new()));let worker=Arc::clone(&shared);
         plx_base::task::spawn_off_frame("native scene input",move|off|{
             let mut last:Option<Packet>=None;let mut next=plx_base::task::worker_now(off);let mut releasing=false;
             // Only the worker samples real time; frame-owned freshness uses replay ticks.
@@ -56,7 +62,7 @@ impl Bridge {
                         slot=wake.wait_timeout(slot,wait).unwrap_or_else(|e|e.into_inner()).0;
                     }
                     if slot.stop {(Packet::neutral(),slot.generation,true)}else if releasing{(Packet::neutral(),slot.generation,false)}else{if slot.generation!=observed_generation{observed_generation=slot.generation;observed_at=plx_base::task::worker_now(off);}
-                        if plx_base::task::worker_now(off).saturating_duration_since(observed_at)>Duration::from_millis(750){slot.packet=Packet::neutral();}
+                        if !slot.position&&plx_base::task::worker_now(off).saturating_duration_since(observed_at)>Duration::from_millis(750){slot.packet=Packet::neutral();}
                         let updated=slot.updated;let (packet,generation)=slot.take(updated);(packet,generation,false)}
                 };
                 if stop {let _=send(&packet);break;}
@@ -78,7 +84,7 @@ impl Bridge {
     pub fn pointer(&self,point:Option<[f32;2]>){self.update(|packet|match point{
         Some(point)=>{packet.pointer=point;packet.engaged=true;},None=>*packet=Packet::neutral(),
     });}
-    pub fn engaged(&self)->bool{let slot=self.shared.0.lock().unwrap_or_else(|e|e.into_inner());slot.packet.engaged&&super::clock::now().wrapping_sub(slot.updated)<=750}
+    pub fn engaged(&self)->bool{let slot=self.shared.0.lock().unwrap_or_else(|e|e.into_inner());slot.packet.engaged&&(slot.position||super::clock::now().wrapping_sub(slot.updated)<=750)}
     pub fn activate(&self){self.update(|packet|{if packet.engaged{packet.activate=true;}});}
     pub fn zoom(&self,delta:f32){self.update(|packet|{if packet.engaged&&delta.is_finite(){packet.zoom=(packet.zoom+delta).clamp(-32.0,32.0);}});}
     pub fn key(&self,key:&'static str,down:bool){if !matches!(key,"KeyW"|"KeyA"|"KeyS"|"KeyD"|"KeyE"|"Space"|"ShiftLeft"|"ShiftRight"){return;}self.update(|packet|{
@@ -107,6 +113,13 @@ mod tests {
         let (first,_)=slot.take(slot.updated);assert_eq!(first.pointer,[0.99,0.25]);assert!(first.activate);assert_eq!(first.zoom,2.0);
         let (next,_)=slot.take(slot.updated);assert!(!next.activate);assert_eq!(next.zoom,0.0);assert!(next.engaged);
         slot.packet.keys.push("KeyW");let (expired,_)=slot.take(slot.updated.wrapping_add(751));assert!(expired==Packet::neutral());
+    }
+    #[test]
+    fn managed_position_survives_stillness_until_explicit_release_but_legacy_expires(){
+        let mut slot=Slot::new();slot.position=true;slot.packet.engaged=true;slot.packet.pointer=[0.8,0.2];
+        let (packet,_)=slot.take(slot.updated.wrapping_add(60000));assert!(packet.engaged);assert_eq!(packet.pointer,[0.8,0.2]);
+        slot.packet=Packet::neutral();assert!(!slot.take(slot.updated.wrapping_add(60001)).0.engaged);
+        let mut legacy=Slot::new();legacy.packet.engaged=true;assert!(!legacy.take(legacy.updated.wrapping_add(751)).0.engaged);
     }
     #[test]
     fn replay_tick_expiry_is_wrap_safe(){
