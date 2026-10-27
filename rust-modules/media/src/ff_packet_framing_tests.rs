@@ -826,7 +826,31 @@ const PROGRESSIVE_TS_H264: &[u8] = &[
 ];
 #[test]
 fn progressive_annexb_encoded_aud_sps_pps_idr_is_not_truncated_to_aud() {
-    let (key,out)=to_annexb(PROGRESSIVE_TS_H264,false,&[]);
+    let mut out=Vec::new();let mut sets=H264ParamSets::default();
+    let key=unsafe{progressive_h264_access_unit(PROGRESSIVE_TS_H264,h264_annexb_extradata(&[]),4,&[],&mut sets,&mut out)}.unwrap();
     assert_eq!(out,PROGRESSIVE_TS_H264,"the actual progressive path must retain every encoded NAL, not only a five-byte AUD");
     assert!(key);
+}
+
+#[test]
+fn progressive_h264_framing_uses_codec_extradata_not_length_one_packet_heuristics() {
+    let sps=&PROGRESSIVE_TS_H264[10..32];let pps=&PROGRESSIVE_TS_H264[36..40];
+    let mut ed=vec![1,0x42,0xc0,0x0a,0xff,0xe1];ed.extend_from_slice(&(sps.len() as u16).to_be_bytes());ed.extend_from_slice(sps);
+    ed.push(1);ed.extend_from_slice(&(pps.len() as u16).to_be_bytes());ed.extend_from_slice(pps);
+    assert!(!h264_annexb_extradata(&ed));
+    let (params,nls)=unsafe{parse_extradata(ed.as_ptr(),ed.len(),false)};
+    let packet=avcc(&[&[0x09],&[0x65,0xaa]]); // First four bytes ALSO look like an Annex-B prefix.
+    let mut sets=H264ParamSets::default();let mut out=Vec::new();
+    assert_eq!(unsafe{progressive_h264_access_unit(&packet,h264_annexb_extradata(&ed),nls,&params,&mut sets,&mut out)},Ok(true));
+    let mut expected=params;expected.extend_from_slice(&[0,0,0,1,9,0,0,0,1,0x65,0xaa]);assert_eq!(out,expected);
+    assert!(!h264_annexb_extradata(&[2,0xde,0xad]));
+}
+#[test]
+fn progressive_annexb_codec_parameter_sets_seed_later_idr_without_inband_headers() {
+    let ed=&PROGRESSIVE_TS_H264[6..40];assert!(h264_annexb_extradata(ed));
+    let mut sets=H264ParamSets::default();let mut out=Vec::new();
+    ts_h264_access_unit(ed,&mut sets,&mut out).unwrap();
+    assert_eq!(unsafe{progressive_h264_access_unit(&PROGRESSIVE_TS_H264[40..],true,4,&[],&mut sets,&mut out)},Ok(true));
+    assert_eq!(out,&PROGRESSIVE_TS_H264[6..]);
+    assert!(unsafe{progressive_h264_access_unit(&[0,0,1,0x65,0xaa],true,4,&[],&mut H264ParamSets::default(),&mut out)}.is_err());
 }
