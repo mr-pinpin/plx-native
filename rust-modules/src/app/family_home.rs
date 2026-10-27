@@ -70,7 +70,9 @@ impl Runtime {
         if !down&&self.scene_click{self.scene_click=false;return true;}false
     }
     pub fn control_confirm(&mut self,down:bool)->bool{
-        self.managed.is_some()&&self.control_click(down)
+        if self.managed.is_none(){return false;}
+        if down&&self.scene_click{return true;}
+        self.control_click(down)
     }
     pub fn control_zoom(&self,delta:f32)->bool{self.input.as_ref().is_some_and(|input|{if input.engaged(){input.zoom(delta);true}else{false}})}
     pub fn control_key(&mut self,key:&'static str,down:bool)->bool{if down{self.shuttle.release();self.direction.release();}self.input.as_ref().is_some_and(|input|{let engaged=input.engaged();input.key(key,down);engaged})}
@@ -246,6 +248,7 @@ mod control_tests{
         assert!(!runtime.control_confirm(true));assert!(!runtime.scene_click);
         runtime.managed=Some(serde_json::from_str(r#"{"url":"http://192.0.2.1/video.ts","videoCodec":"h264","fps":30,"width":1920,"height":1080}"#).unwrap());
         assert!(runtime.control_confirm(true));assert!(runtime.scene_click);
+        assert!(runtime.control_confirm(true));assert!(runtime.scene_click,"a held OK remains one owned gesture");
         assert!(runtime.control_confirm(false));assert!(!runtime.scene_click);
         runtime.release_controls();assert!(!runtime.control_confirm(true));
     }
