@@ -6842,6 +6842,7 @@ mod native_seek_tests {
 mod live_join_tests {
     use super::*;
     #[test]
+    #[cfg(feature="hostsim")]
     fn actual_live_feed_normalizes_first_idr_without_arming_prime_or_changing_next_vod(){
         let _serial=plx_base::testlock::serial();
         struct Reset;
