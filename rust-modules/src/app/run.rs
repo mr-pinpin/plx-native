@@ -794,6 +794,7 @@ unsafe fn family_scene_input(app:&mut App,et:u32)->bool{
         return delta!=0.0&&home.control_zoom(delta);
     }else if et==SDL_KEYDOWN||et==SDL_KEYUP{
         let (_,_,sym)=decode_key(&app.ev);
+        if plx_ui::consts::is_ok(sym)&&home.control_confirm(et==SDL_KEYDOWN){return true;}
         let key=match sym {119|87=>Some("KeyW"),97|65=>Some("KeyA"),115|83=>Some("KeyS"),100|68=>Some("KeyD"),101|69=>Some("KeyE"),32=>Some("Space"),1073742049=>Some("ShiftLeft"),1073742053=>Some("ShiftRight"),_=>None};
         if let Some(key)=key{return home.control_key(key,et==SDL_KEYDOWN);}
         if et==SDL_KEYDOWN{home.release_controls();}

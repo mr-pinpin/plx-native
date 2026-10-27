@@ -69,6 +69,9 @@ impl Runtime {
         if down{self.scene_click=false;if input.engaged(){self.scene_click=true;input.activate();return true;}return false;}
         if !down&&self.scene_click{self.scene_click=false;return true;}false
     }
+    pub fn control_confirm(&mut self,down:bool)->bool{
+        self.managed.is_some()&&self.control_click(down)
+    }
     pub fn control_zoom(&self,delta:f32)->bool{self.input.as_ref().is_some_and(|input|{if input.engaged(){input.zoom(delta);true}else{false}})}
     pub fn control_key(&mut self,key:&'static str,down:bool)->bool{if down{self.shuttle.release();self.direction.release();}self.input.as_ref().is_some_and(|input|{let engaged=input.engaged();input.key(key,down);engaged})}
     pub fn status(&mut self,now:u32)->Option<plx_screens::family_home::Status>{
@@ -235,6 +238,16 @@ mod control_tests{
         runtime.control_pointer(100.0,100.0,false);assert!(runtime.control_click(true));
         // The old scene's button-up was lost. A new dock gesture owns both of its edges.
         runtime.control_pointer(960.0,900.0,true);assert!(!runtime.control_click(true));assert!(!runtime.control_click(false));
+    }
+    #[test]
+    fn remote_confirm_activates_a_managed_pointer_and_leaves_launcher_confirmation_alone(){
+        let mut runtime=Runtime::new(Config::empty());runtime.input=Some(super::super::family_input::Bridge::for_test());
+        runtime.control_pointer(100.0,100.0,false);
+        assert!(!runtime.control_confirm(true));assert!(!runtime.scene_click);
+        runtime.managed=Some(serde_json::from_str(r#"{"url":"http://192.0.2.1/video.ts","videoCodec":"h264","fps":30,"width":1920,"height":1080}"#).unwrap());
+        assert!(runtime.control_confirm(true));assert!(runtime.scene_click);
+        assert!(runtime.control_confirm(false));assert!(!runtime.scene_click);
+        runtime.release_controls();assert!(!runtime.control_confirm(true));
     }
 }
 
