@@ -22,7 +22,7 @@ impl Config {
             return Err("family configuration rejected".into());
         }
         for app in &mut config.apps { app.pixels=app.icon.as_deref().and_then(load_icon); }
-        config.cover_pixels=config.cover.as_deref().and_then(load_icon);
+        config.cover_pixels=config.cover.as_deref().and_then(load_cover);
         Ok(config)
     }
     pub fn applications(&self)->Vec<Application>{self.apps.iter().map(|app|Application{id:app.id.clone(),title:app.title.clone(),icon:app.pixels.clone()}).collect()}
@@ -130,14 +130,20 @@ mod cover_tests{
 
 // Administrative local PNGs only; bound file bytes and IHDR dimensions before decoding.
 fn load_icon(path:&str)->Option<plx_ui::owned_image::Pixels>{
+    load_image(path,512,512,1048576,false)
+}
+fn load_cover(path:&str)->Option<plx_ui::owned_image::Pixels>{
+    load_image(path,1920,1080,8*1048576,true)
+}
+fn load_image(path:&str,max_width:u32,max_height:u32,max_bytes:u64,backdrop:bool)->Option<plx_ui::owned_image::Pixels>{
     use std::io::Read;
     if !path.starts_with("/media/internal/"){return None;}
-    let mut bytes=Vec::new();std::fs::File::open(path).ok()?.take(1048577).read_to_end(&mut bytes).ok()?;
-    if bytes.len()>1048576||bytes.len()<24||&bytes[..8]!=b"\x89PNG\r\n\x1a\n"{return None;}
+    let mut bytes=Vec::new();std::fs::File::open(path).ok()?.take(max_bytes+1).read_to_end(&mut bytes).ok()?;
+    if bytes.len() as u64>max_bytes||bytes.len()<24||&bytes[..8]!=b"\x89PNG\r\n\x1a\n"{return None;}
     let w=u32::from_be_bytes(bytes[16..20].try_into().ok()?);let h=u32::from_be_bytes(bytes[20..24].try_into().ok()?);
-    if w==0||h==0||w>512||h>512{return None;}
+    if w==0||h==0||w>max_width||h>max_height{return None;}
     let (w,h,rgba)=plx_gfx::img::img_decode_owned(&bytes)?;
-    plx_ui::owned_image::Pixels::new(w.try_into().ok()?,h.try_into().ok()?,rgba)
+    if backdrop{plx_ui::owned_image::Pixels::backdrop(w.try_into().ok()?,h.try_into().ok()?,rgba)}else{plx_ui::owned_image::Pixels::new(w.try_into().ok()?,h.try_into().ok()?,rgba)}
 }
 
 struct Snapshot {observed:u64,label:String}

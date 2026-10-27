@@ -6,7 +6,15 @@ use crate::{Painter,Rect,frame::{Budget,Class}};
 pub struct Pixels {pub width:u16,pub height:u16,pub rgba:Arc<[u8]>}
 impl Pixels {
     pub fn new(width:u16,height:u16,rgba:Vec<u8>)->Option<Self>{
-        (width>0&&height>0&&width<=512&&height<=512&&rgba.len()==usize::from(width)*usize::from(height)*4)
+        Self::bounded(width,height,rgba,512,512)
+    }
+    /// Full-resolution artwork for the 1920×1080 graphics surface. Small app icons retain
+    /// their stricter constructor; a background cannot silently raise every icon's limits.
+    pub fn backdrop(width:u16,height:u16,rgba:Vec<u8>)->Option<Self>{
+        Self::bounded(width,height,rgba,1920,1080)
+    }
+    fn bounded(width:u16,height:u16,rgba:Vec<u8>,max_width:u16,max_height:u16)->Option<Self>{
+        (width>0&&height>0&&width<=max_width&&height<=max_height&&rgba.len()==usize::from(width)*usize::from(height)*4)
             .then(||Self{width,height,rgba:rgba.into()})
     }
 }
@@ -14,7 +22,8 @@ impl Pixels {
 pub struct OwnedImage {texture:u32,bytes:usize}
 impl OwnedImage {
     pub fn prepare(&mut self,pixels:&Pixels,budget:&mut Budget){
-        if self.texture==0&&budget.take(Class::Poster,plx_base::diag::heartbeat::now_us()){
+        let class=if pixels.width>512||pixels.height>512{Class::Residency}else{Class::Poster};
+        if self.texture==0&&budget.take(class,plx_base::diag::heartbeat::now_us()){
             self.texture=plx_gfx::img::img_upload_rgba(pixels.rgba.as_ptr(),pixels.width.into(),pixels.height.into());
             if self.texture!=0 {self.bytes=pixels.rgba.len();plx_gfx::gfx::warm_tex(self.texture);}
         }
@@ -26,3 +35,19 @@ impl OwnedImage {
     }
 }
 impl Drop for OwnedImage {fn drop(&mut self){plx_gfx::gfx::delete_tex(self.texture);}}
+
+#[cfg(test)]
+mod tests{
+    use super::*;
+    #[test]
+    fn a_full_hd_cover_keeps_each_pixel_and_does_not_expand_icon_or_allocation_limits(){
+        let rgba=vec![127;1920*1080*4];
+        let cover=Pixels::backdrop(1920,1080,rgba.clone()).unwrap();
+        assert_eq!((cover.width,cover.height),(1920,1080));assert_eq!(cover.rgba.as_ref(),rgba);
+        assert!(Pixels::new(1920,1080,rgba).is_none());
+        assert!(Pixels::backdrop(1921,1080,Vec::new()).is_none());
+        assert!(Pixels::backdrop(1920,1081,Vec::new()).is_none());
+        assert!(Pixels::backdrop(u16::MAX,u16::MAX,Vec::new()).is_none());
+        assert!(Pixels::backdrop(1920,1080,vec![0;4]).is_none());
+    }
+}
