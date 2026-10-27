@@ -7,6 +7,9 @@ use crate::route::PlaybackSession;
 #[serde(deny_unknown_fields)]
 pub struct Source {
     pub url: String,
+    /// Only an accepted managed-scene grant can opt into a live join. Private VOD JSON cannot.
+    #[serde(skip)]
+    pub clock: crate::route::BackgroundClock,
     #[serde(default,rename="localCache")]
     pub local_cache: Option<crate::local_cache::Spec>,
     #[serde(rename="videoCodec")]
@@ -20,7 +23,8 @@ pub struct Source {
 fn loop_default()->bool{true}
 impl Source {
     pub fn valid(&self)->bool {
-        (self.url.starts_with("http://")||self.url.starts_with("https://"))
+        (self.clock!=crate::route::BackgroundClock::LiveJoin||(!self.looping&&self.local_cache.is_none()))
+            && (self.url.starts_with("http://")||self.url.starts_with("https://"))
             && self.local_cache.as_ref().is_none_or(|cache|cache.valid())
             && self.url.len()<=4096 && !self.url.chars().any(char::is_control)
             && matches!(self.video_codec.as_str(),"h264"|"hevc"|"h265")
@@ -36,6 +40,7 @@ pub fn start(ps:&mut PlaybackSession,pa:&mut PlayerAdapter,source:&Source)->bool
     if !crate::route::set_stream_declaration(ps,&source.video_codec,"",source.fps,plx_data::metadata::Dovi::NONE,false){return false;}
     crate::route::set_stream_source_raster(ps,source.width,source.height);
     crate::route::mark_background(ps);
+    crate::route::set_background_clock(ps,source.clock);
     crate::route::set_background_cache(ps,source.local_cache.clone());
     crate::route::set_url(ps,&source.url);
     super::start_bufferfeed(ps,pa)
@@ -82,6 +87,13 @@ mod tests{
         source.fps=61.0;assert!(!source.valid());source.fps=120.0;assert!(!source.valid());
         source.fps=60.0;source.width=1921;assert!(!source.valid());
         source.width=1920;source.height=1089;assert!(!source.valid());
+    }
+    #[test]
+    fn configuration_cannot_opt_into_managed_live_clock(){
+        let source:Source=serde_json::from_str(r#"{"url":"http://192.0.2.1/video.ts","videoCodec":"h264","fps":30,"width":1920,"height":1080,"loop":false}"#).unwrap();
+        assert_eq!(source.clock,crate::route::BackgroundClock::Content);
+        let mut invalid=source;invalid.clock=crate::route::BackgroundClock::LiveJoin;invalid.looping=true;
+        assert!(!invalid.valid());
     }
     #[test]
     fn local_cache_is_opt_in_and_never_turns_url_validation_into_file_access(){

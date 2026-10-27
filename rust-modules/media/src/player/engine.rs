@@ -190,6 +190,8 @@ pub struct Engine {
     pub placed_src: (c_int, c_int),
     pub eos_pushed: bool, // Kodi VIDEO_DRAIN: pushEOS() sent once at true EOF
     pub rebase_pending: bool, // g_rebase_pending
+    // Exact Load-local join fence; independent of seek rebase so live joins never prime as seeks.
+    live_join_pending: bool,
     // In-place seek only: keyframes this far AHEAD of the seek target are stale frames the demuxer
     // produced from its pre-flush read position before the reopen+av_seek won the race (playback
     // drifts forward during a long scrub) — reject them so the rebase anchors on the REAL post-seek
@@ -1733,6 +1735,7 @@ fn start_bufferfeed_inner(
         // to fresh play (disp_base carries the content offset). Plain fresh play leaves this
         // false (first keyframe is already ~0).
         rebase_pending: SHARED.seek_to_ns.load(Ordering::Relaxed) >= 0,
+        live_join_pending: crate::route::background_clock(ps)==crate::route::BackgroundClock::LiveJoin,
         rebase_drops: 0,
         seek_armed_at: 0,
         seek_retries: 0,
@@ -2911,6 +2914,13 @@ pub fn feed_both_lanes(mt: &MainThread, eng: &mut Engine) {
     try_prime(mt, eng);
 }
 
+/// One first-keyframe decision per exact Engine/Load. The caller never invokes this after join.
+fn live_join_shift(pending:&mut bool,key:bool,pts:i64)->Option<i64>{
+    if !*pending||!key{return None;}
+    *pending=false;
+    Some(pts.saturating_neg())
+}
+
 fn feed_stream(mt: &MainThread, eng: &mut Engine) {
     let qp = match eng.aq_video.as_mut() {
         Some(q) => &mut **q as *mut AuQueue,
@@ -2942,6 +2952,18 @@ fn feed_stream(mt: &MainThread, eng: &mut Engine) {
         }
         let n = eng.pending_video.as_ref().unwrap().0;
         let (es, key, pts, len, data) = unsafe { crate::aq::au_fields(n) };
+        if eng.live_join_pending {
+            // A late viewer receives current TS packets, not a zero-based recording. Discard
+            // undecodable pre-IDR access units, then use the existing single PTS authority.
+            // This does not arm seek priming, touch the encoded transport, or change VOD timing.
+            let Some(shift)=live_join_shift(&mut eng.live_join_pending,es==1&&key!=0,pts) else {
+                eng.pending_video=None;
+                continue;
+            };
+            SHARED.pts_shift.store(shift,Ordering::Relaxed);
+            eng.seek_base_pts=0;
+            log(&format!("live join: first keyframe pts={pts} -> pts_shift={shift}"));
+        }
         if eng.rebase_pending {
             if es == 1 && key != 0 {
                 let completing_in_place_seek = eng.flushed;
@@ -4288,6 +4310,7 @@ mod prime_livelock_tests {
             placed_src: (0, 0),
             eos_pushed: false,
             rebase_pending: false,
+            live_join_pending: false,
             rebase_drops: 0,
             seek_armed_at: 0,
             seek_retries: 0,
@@ -6812,5 +6835,60 @@ mod native_seek_tests {
         assert_eq!(eng.max_fed_video_pts, 0, "nothing is fed into a pipeline that refused the seek");
         assert!(eng.pending_video.is_none());
         assert_eq!(ffi_host::flush_calls_for_test(), 0);
+    }
+}
+
+#[cfg(test)]
+mod live_join_tests {
+    use super::*;
+    #[test]
+    fn actual_live_feed_normalizes_first_idr_without_arming_prime_or_changing_next_vod(){
+        let _serial=plx_base::testlock::serial();
+        struct Reset;
+        impl Drop for Reset {fn drop(&mut self){
+            crate::player::ffi_host::force_clocksink_for_test(false);
+            SHARED.pts_shift.store(0,Ordering::Relaxed);
+        }}
+        crate::player::ffi_host::force_clocksink_for_test(true);
+        let _reset=Reset;
+        let mt=unsafe{plx_base::task::MainThread::assume()};
+        let mut eng=super::prime_livelock_tests::engine_after_reload();
+        eng.prime_play=false;eng.live_join_pending=true;
+        SHARED.pts_shift.store(0,Ordering::Relaxed);
+        SHARED.pres_fed.store(PRES_NONE,Ordering::Relaxed);
+        let queue=&mut **eng.aq_video.as_mut().unwrap() as *mut crate::aq::AuQueue;
+        let au=[0u8;8];
+        for (pts,key) in [(766_666_666,0),(1_000_000_000,1),(1_033_333_333,0)] {
+            crate::aq::aq_push(queue,au.as_ptr(),au.len() as c_int,pts,key,1);
+        }
+        feed_stream(&mt,&mut eng);
+        assert_eq!(SHARED.pts_shift.load(Ordering::Relaxed),-1_000_000_000);
+        assert_eq!(eng.max_fed_video_pts,33_333_333);
+        assert!(!eng.live_join_pending);assert!(!eng.rebase_pending);assert!(!eng.prime_play);
+        let mut vod=super::prime_livelock_tests::engine_after_reload();
+        vod.prime_play=false;
+        SHARED.pts_shift.store(0,Ordering::Relaxed);
+        SHARED.pres_fed.store(PRES_NONE,Ordering::Relaxed);
+        let queue=&mut **vod.aq_video.as_mut().unwrap() as *mut crate::aq::AuQueue;
+        crate::aq::aq_push(queue,au.as_ptr(),au.len() as c_int,766_666_666,1,1);
+        feed_stream(&mt,&mut vod);
+        assert_eq!(vod.max_fed_video_pts,766_666_666);
+        assert_eq!(SHARED.pts_shift.load(Ordering::Relaxed),0);
+    }
+    #[test]
+    fn managed_live_join_discards_delta_prefix_and_preserves_relative_pts_without_seek_prime(){
+        let mut pending=true;
+        assert_eq!(live_join_shift(&mut pending,false,766_666_666),None);
+        assert!(pending);
+        let first=1_000_000_000;
+        let shift=live_join_shift(&mut pending,true,first).unwrap();
+        assert_eq!(first+shift,0);
+        assert_eq!(1_033_333_333+shift,33_333_333);
+        assert!(!pending);
+        assert_eq!(live_join_shift(&mut pending,true,2_000_000_000),None);
+        let vod=crate::route::PlaybackSession::default();
+        assert_eq!(crate::route::background_clock(&vod),crate::route::BackgroundClock::Content);
+        let mut vod_pending=false;
+        assert_eq!(live_join_shift(&mut vod_pending,true,first),None);
     }
 }

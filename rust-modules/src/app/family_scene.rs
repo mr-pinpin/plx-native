@@ -31,7 +31,7 @@ impl Grant {
             &&[&self.video_url,&self.controls.input_url,&self.controls.heartbeat_url,&self.controls.stop_url]
                 .into_iter().all(|url|origin(url).is_some()&&origin(url)==origin(query))
     }
-    pub fn source(&self)->Source{Source{url:self.video_url.clone(),local_cache:None,video_codec:self.vcodec.clone(),fps:self.fps,width:self.width,height:self.height,looping:false}}
+    pub fn source(&self)->Source{Source{url:self.video_url.clone(),clock:plx_media::route::BackgroundClock::LiveJoin,local_cache:None,video_codec:self.vcodec.clone(),fps:self.fps,width:self.width,height:self.height,looping:false}}
     pub fn input(&self)->Option<super::family_input::Config>{serde_json::from_value(serde_json::json!({"inputURL":self.controls.input_url})).ok()}
 }
 pub(crate) enum Change {Ready(Grant),Passive}
@@ -131,6 +131,7 @@ mod tests {
         assert!(scene_id("atlas"));assert!(!scene_id("../../shell"));
         let value=serde_json::json!({"sessionId":"session-1","scene":"atlas","state":"ready","videoURL":"http://192.0.2.1:4188/video.ts?cap=example","vcodec":"h264","fps":30,"width":1920,"height":1080,"videoOnly":true,"controls":{"inputURL":"http://192.0.2.1:4188/input","heartbeatURL":"http://192.0.2.1:4188/heartbeat","stopURL":"http://192.0.2.1:4188/stop"}});
         let mut grant:Grant=serde_json::from_value(value).unwrap();assert!(grant.valid("http://192.0.2.1:4188/query"));
+        assert_eq!(grant.source().clock,plx_media::route::BackgroundClock::LiveJoin);
         grant.controls.stop_url="http://192.0.2.2:4188/stop".into();assert!(!grant.valid("http://192.0.2.1:4188/query"));
         grant.controls.stop_url="http://192.0.2.1:4188/stop".into();grant.fps=60.0;assert!(grant.valid("http://192.0.2.1:4188/query"));
         grant.fps=61.0;assert!(!grant.valid("http://192.0.2.1:4188/query"));

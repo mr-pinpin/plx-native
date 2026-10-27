@@ -151,3 +151,5 @@ producer page supplies its own UI. Actual default-scene acceptance or failure re
 the native launcher. Root Back retains the existing return-to-default behavior.
 This does not add a new Home key hook: SAM may treat Home as a no-op while Family
 is already foreground. Ordinary forest presentation keeps the configured dock.
+
+Managed interactive scene grants use a Load-local live clock: undecodable access units before the first keyframe are discarded, and that keyframe is fed at zero while later timestamp intervals remain intact. The join does not arm seek priming. Ordinary background JSON, local movies and HLS retain their existing content clock; disabling looping alone never opts a source into live timing.
