@@ -2322,8 +2322,9 @@ fn loop_requests(app: &mut App) {
     for req in app.bridge.take_reqs() {
         // A scene is a child of Family Home. Its root Back uses the same tree-owned
         // intent; only the application owner decides whether a scene remains to leave.
-        if matches!(req,plx_screens::registry::LoopReq::BackAtRoot)
-            &&app.family_home.as_mut().is_some_and(|home|home.home_scene()){continue;}
+        if matches!(req,plx_screens::registry::LoopReq::BackAtRoot){
+            if let Some(home)=app.family_home.as_mut(){home.relaunch();continue;}
+        }
         let req = match reduce_navigation_request(req, &mut app.pages) {
             Ok(()) => continue,
             Err(req) => req,
