@@ -66,6 +66,7 @@ impl<H: AppLike> Machine<H> for FamilyHomeScreen {
     type Ev = ScreenEvent<H>;
     fn step(&mut self, ev: &Self::Ev, cx: &Cx<'_,H>, fx: &mut Effects<'_,H>) -> Handled {
         match ev {
+            ScreenEvent::App(crate::registry::AppMsg::FamilyWake)=>{self.idle_ms=0;fx.invalidate(Provenance::Lifecycle);Handled::Yes}
             ScreenEvent::App(crate::registry::AppMsg::FamilyStatus(status))=>{if self.status!=*status{self.status=status.clone();fx.invalidate(Provenance::Lifecycle);}Handled::Yes}
             ScreenEvent::Tick(t) => {
                 self.idle_ms = self.idle_ms.saturating_add(t.dt_us / 1000);

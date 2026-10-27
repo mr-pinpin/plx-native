@@ -1720,7 +1720,7 @@ fn did_foreground_with_link(app: &mut App) -> ForegroundActivation {
     let (event, env) = super::deeplink::link_inputs(
         &app.pages, app.window_activity.allow_present(true), stands, now);
     if matches!(event,super::deeplink::LinkEvent::Arrived(super::deeplink::Parsed::None)) {
-        if let Some(home)=app.family_home.as_mut(){home.home_scene();}
+        if let Some(home)=app.family_home.as_mut(){home.relaunch();}
     }
     let out = app.deeplink.step(event, &env);
     let input = if out.leaves_playback {
@@ -1789,6 +1789,13 @@ pub(crate) unsafe fn playback_tick(app: &mut App, fr: &mut Frame) {
         }
         let family_foreground=playback_may_run(app);
         if let Some(home)=app.family_home.as_mut() { home.tick(&mut app.player.session,&mut app.adapters.player,fr.now,family_foreground); }
+        if app.family_home.as_mut().is_some_and(|home|home.take_wake()){
+            if let Some(instance)=app.pages.nav.top_page().and_then(|page|app.pages.nav.instance_of(page.id)) {
+                app.pages.emit(plx_machine::machine::MachineId::Nav,plx_machine::machine::Fx::Deliver(
+                    plx_machine::machine::MachineId::Instance(instance),plx_machine::machine::Delivery::Screen(
+                        plx_ui::screen::ScreenEvent::App(plx_screens::registry::AppMsg::FamilyWake))));
+            }
+        }
         if playback_may_run(app) {
             if is_started() {
                 plx_media::player::pump(&mut app.player.session, &mut app.adapters.player, fr.now);
@@ -2605,7 +2612,7 @@ pub(crate) unsafe fn update(app: &mut App, fr: &mut Frame) {
         let stands = link_session_stands(app);
         if super::deeplink::frame(&mut app.pages, &mut app.deeplink, &mut app.menu_play_await,
             app.window_activity.allow_present(true), stands, fr.now) {
-            if let Some(home)=app.family_home.as_mut(){home.home_scene();}
+            if let Some(home)=app.family_home.as_mut(){home.relaunch();}
         }
         if app.menu_play_await.is_some() {
             menu_play_tick(&mut app.player.session, &mut app.adapters.player,

@@ -7,7 +7,7 @@ pub(crate) struct Config {version:u32,pub background:Option<Source>,apps:Vec<App
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ApplicationConfig{id:String,title:String,#[serde(default)] icon:Option<String>,#[serde(default)] scene:Option<String>,#[serde(skip)] pixels:Option<plx_ui::owned_image::Pixels>}
-pub(crate) struct Runtime {config:Config,retry_at:u32,status_at:u32,snapshot_at:u32,snapshot:Option<Snapshot>,worker:Option<std::sync::mpsc::Receiver<Option<Snapshot>>>,input:Option<super::family_input::Bridge>,scene_click:bool,scene:Option<super::family_scene::Controller>,managed:Option<Source>}
+pub(crate) struct Runtime {config:Config,retry_at:u32,status_at:u32,snapshot_at:u32,snapshot:Option<Snapshot>,worker:Option<std::sync::mpsc::Receiver<Option<Snapshot>>>,input:Option<super::family_input::Bridge>,scene_click:bool,scene:Option<super::family_scene::Controller>,managed:Option<Source>,foreground:bool,wake:bool}
 impl Config {
     pub fn load()->Result<Self,String>{
         use std::io::Read;
@@ -29,12 +29,14 @@ impl Config {
 }
 impl Runtime {
     pub fn application(&self,index:u8)->Option<&str>{self.config.apps.get(index as usize).map(|app|app.id.as_str())}
-    pub fn new(mut config:Config)->Self{let scene=config.rendering.take().map(super::family_scene::Controller::new);let input=config.controls.as_ref().and_then(super::family_input::Bridge::start);Self{config,retry_at:0,status_at:0,snapshot_at:0,snapshot:None,worker:None,input,scene_click:false,scene,managed:None}}
+    pub fn new(mut config:Config)->Self{let scene=config.rendering.take().map(super::family_scene::Controller::new);let input=config.controls.as_ref().and_then(super::family_input::Bridge::start);Self{config,retry_at:0,status_at:0,snapshot_at:0,snapshot:None,worker:None,input,scene_click:false,scene,managed:None,foreground:false,wake:false}}
     pub fn launch_scene(&mut self,index:u8)->bool{
         let Some(scene)=self.config.apps.get(index as usize).and_then(|app|app.scene.as_deref())else{return false;};
         if let Some(controller)=&mut self.scene{controller.select(scene);true}else{false}
     }
-    pub fn home_scene(&mut self)->bool{self.scene.as_mut().is_some_and(super::family_scene::Controller::home)}
+    pub fn home_scene(&mut self)->bool{let changed=self.scene.as_mut().is_some_and(super::family_scene::Controller::home);if changed{self.wake=true;}changed}
+    pub fn relaunch(&mut self){self.home_scene();self.wake=true;}
+    pub fn take_wake(&mut self)->bool{std::mem::take(&mut self.wake)}
     pub fn release_controls(&mut self){self.scene_click=false;if let Some(input)=&self.input{input.release();}}
     pub fn controls_enabled(&self)->bool{self.input.is_some()}
     pub fn control_pointer(&mut self,x:f32,y:f32,on_control:bool){
@@ -68,6 +70,7 @@ impl Runtime {
         Some(plx_screens::family_home::Status{clock,date:locale.date(reading.year,reading.month,reading.day).unwrap_or_default(),network})
     }
     pub fn tick(&mut self,ps:&mut plx_media::route::PlaybackSession,pa:&mut plx_media::player::adapter::PlayerAdapter,now:u32,foreground:bool){
+        if foreground&&!self.foreground{self.wake=true;}self.foreground=foreground;
         if let Some(change)=self.scene.as_mut().and_then(|scene|scene.poll(foreground)){
             self.release_controls();
             if plx_media::route::is_background(ps)&&pa.is_live(){plx_media::player::stop_bufferfeed(ps,pa);}
