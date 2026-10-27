@@ -1748,6 +1748,13 @@ fn playback_may_run(app: &App) -> bool {
 /// seek — everything that reads `fr.now` and no `dt`.
 pub(crate) unsafe fn playback_tick(app: &mut App, fr: &mut Frame) {
         park_on_decoder_release(app);
+        if let Some(status)=app.family_home.as_mut().and_then(|home|home.status(fr.now)) {
+            if let Some(instance)=app.pages.nav.top_page().and_then(|page|app.pages.nav.instance_of(page.id)) {
+                app.pages.emit(plx_machine::machine::MachineId::Nav,plx_machine::machine::Fx::Deliver(
+                    plx_machine::machine::MachineId::Instance(instance),plx_machine::machine::Delivery::Screen(
+                        plx_ui::screen::ScreenEvent::App(plx_screens::registry::AppMsg::FamilyStatus(status)))));
+            }
+        }
         if playback_may_run(app) { if let Some(home)=app.family_home.as_mut() { home.tick(&mut app.player.session,&mut app.adapters.player,fr.now); } }
         if playback_may_run(app) {
             if is_started() {

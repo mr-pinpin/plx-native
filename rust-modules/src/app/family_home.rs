@@ -7,7 +7,7 @@ pub(crate) struct Config {version:u32,pub background:Option<Source>,apps:Vec<App
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ApplicationConfig{id:String,title:String,#[serde(default)] icon:Option<String>,#[serde(skip)] pixels:Option<plx_ui::owned_image::Pixels>}
-pub(crate) struct Runtime {config:Config,retry_at:u32}
+pub(crate) struct Runtime {config:Config,retry_at:u32,status_at:u32}
 impl Config {
     pub fn load()->Result<Self,String>{
         use std::io::Read;
@@ -29,7 +29,17 @@ impl Config {
 }
 impl Runtime {
     pub fn application(&self,index:u8)->Option<&str>{self.config.apps.get(index as usize).map(|app|app.id.as_str())}
-    pub fn new(config:Config)->Self{Self{config,retry_at:0}}
+    pub fn new(config:Config)->Self{Self{config,retry_at:0,status_at:0}}
+    pub fn status(&mut self,now:u32)->Option<plx_screens::family_home::Status>{
+        if now.wrapping_sub(self.status_at)>=u32::MAX/2{return None;}
+        self.status_at=now.wrapping_add(1000);
+        let reading=plx_platform::wall_clock::read()?;
+        let locale=plx_platform::i18n::current();
+        let clock=if locale.clock()==plx_platform::i18n::Clock::H12{
+            format!("{}:{:02} {}",if reading.hour%12==0{12}else{reading.hour%12},reading.minute,if reading.hour<12{"AM"}else{"PM"})
+        }else{format!("{:02}:{:02}",reading.hour,reading.minute)};
+        Some(plx_screens::family_home::Status{clock,date:locale.date(reading.year,reading.month,reading.day).unwrap_or_default()})
+    }
     pub fn tick(&mut self,ps:&mut plx_media::route::PlaybackSession,pa:&mut plx_media::player::adapter::PlayerAdapter,now:u32){
         let Some(source)=&self.config.background else{return;};
         if plx_media::player::ended()&&plx_media::route::is_background(ps)&&source.looping{

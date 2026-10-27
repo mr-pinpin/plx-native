@@ -1324,6 +1324,7 @@ pub enum DetailRefreshPhase {
 
 /// The application's messages (spec §3.1).
 pub enum AppMsg {
+    FamilyStatus(crate::family_home::Status),
     Session(plx_session::auth::owner::SessionEvent),
     Consent(ConsentCmd),
     RestartReply { correlation: u32, accepted: bool },

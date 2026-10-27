@@ -11,6 +11,9 @@ use crate::registry::{AppLike, AppFx, LoopReq};
 #[derive(Clone, PartialEq, Eq)]
 pub struct Application { pub id: String, pub title: String, pub icon: Option<plx_ui::owned_image::Pixels> }
 
+#[derive(Clone,PartialEq,Eq,Default)]
+pub struct Status {pub clock:String,pub date:String}
+
 const TILE_W: f32 = 192.0;
 const TILE_H: f32 = 192.0;
 const BOTTOM_INSET: f32 = 96.0;
@@ -21,6 +24,7 @@ pub struct FamilyHomeScreen {
     entry: EntryId,
     apps: Vec<Application>,
     idle_ms: u32,
+    status: Status,
     alpha: Spring,
     pop: CtlPop<5>,
     icons: Vec<plx_ui::owned_image::OwnedImage>,
@@ -28,7 +32,7 @@ pub struct FamilyHomeScreen {
 impl FamilyHomeScreen {
     pub fn new(entry: EntryId, apps: Vec<Application>) -> Self {
         let icons=(0..apps.len()).map(|_|Default::default()).collect();
-        Self { entry, apps, icons, idle_ms: 0, alpha: Spring::at(1.0), pop: CtlPop::new() }
+        Self { entry, apps, icons, status:Status::default(), idle_ms: 0, alpha: Spring::at(1.0), pop: CtlPop::new() }
     }
     fn rect(&self, index: usize) -> Option<Rect> {
         let widths = [Item::new(TILE_W); 5];
@@ -47,6 +51,7 @@ impl LogicalState for FamilyHomeScreen {
     fn write(&self, c: &mut Canon) {
         c.u32(self.entry.0).u32(self.idle_ms).f32(self.alpha.pos).f32(self.alpha.vel);
         self.pop.write_motion(c);
+        c.str(&self.status.clock).str(&self.status.date);
         c.seq(self.apps.len());
         for app in &self.apps { c.str(&app.id).str(&app.title); }
     }
@@ -56,6 +61,7 @@ impl<H: AppLike> Machine<H> for FamilyHomeScreen {
     type Ev = ScreenEvent<H>;
     fn step(&mut self, ev: &Self::Ev, cx: &Cx<'_,H>, fx: &mut Effects<'_,H>) -> Handled {
         match ev {
+            ScreenEvent::App(crate::registry::AppMsg::FamilyStatus(status))=>{if self.status!=*status{self.status=status.clone();fx.invalidate(Provenance::Lifecycle);}Handled::Yes}
             ScreenEvent::Tick(t) => {
                 self.idle_ms = self.idle_ms.saturating_add(t.dt_us / 1000);
                 let old = self.alpha.pos;
@@ -98,6 +104,11 @@ impl<H:AppLike> Screen<H> for FamilyHomeScreen {
     }
     fn draw(&mut self,f:&mut DrawFrame<'_,'_,H>){
         let p=f.painter.alpha(f.page_alpha*self.alpha.pos.clamp(0.0,1.0));
+        if let (Ok(clock),Ok(date))=(CString::new(self.status.clock.as_str()),CString::new(self.status.date.as_str())){
+            let text=plx_ui::label::Label::new(clock.as_ptr(),theme::size::BODY,theme::TEXT_PRIMARY);
+            text.draw(p,Rect::new(80.0,56.0,300.0,48.0));
+            plx_ui::label::Label::new(date.as_ptr(),theme::size::BODY,theme::TEXT_SECONDARY).h(plx_ui::label::HAlign::Right).draw(p,Rect::new(plx_ui::consts::SCR_W-580.0,56.0,500.0,48.0));
+        }
         if let (Some(first),Some(last))=(self.rect(0),self.rect(self.apps.len().saturating_sub(1))){
             p.rrect_sheened(Rect::new(first.x-24.0,first.y-24.0,last.x+last.w-first.x+48.0,TILE_H+48.0),32.0,theme::MENU_GLASS_BOT);
         }
