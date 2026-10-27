@@ -1,6 +1,6 @@
 //! Pure pointer-to-timeline policy. The existing frame owner executes its pause/seek/resume
 //! intents; no codec rate or undocumented reverse-playback verb is introduced.
-// Match the existing native pointer's three-second idle visibility window.
+// Stop stale steering even when no explicit pointer-hide event is delivered.
 const STALE_MS: u32 = 3000;
 const SEEK_MS: u32 = 250;
 const DEAD_ZONE: f64 = 0.06;
