@@ -14,6 +14,8 @@ pub struct Application { pub id: String, pub title: String, pub icon: Option<plx
 #[derive(Clone,PartialEq,Eq,Default)]
 pub struct Status {pub clock:String,pub date:String,pub network:String}
 
+pub const SHAPE:&str="FamilyHomeV1{entry:u32,idle_ms:u32,alpha:{pos:f32,vel:f32},pop:CtlPop<5>,status:{clock:str,date:str,network:str},apps:seq<{id:str,title:str}>}";
+
 const TILE_W: f32 = 192.0;
 const TILE_H: f32 = 192.0;
 const BOTTOM_INSET: f32 = 96.0;

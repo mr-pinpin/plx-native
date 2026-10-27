@@ -565,3 +565,9 @@ table miss`, both modes) on the one new measured run, "S2 · E2 · 32m left", wh
 passed `plxnative-rec check`, and only `1-boot-home-chip-grid/rec-0000.jsonl` was replaced: the manifest
 (anchor flag included) stands. `tests/replay_fixtures.py` replays all three with `verdict=SAME` in Targets
 and Resolve and every difference counter at zero.
+
+### Family launcher census
+
+The native household launcher adds an explicit `AppArg::FamilyHome` payload and its owned dock/status logical state to the screen census. Existing argument tags and ordinary page behavior are retained; the screen shape pin changes from `0x6b71df9e04db2b76` to `0x58b33eb96f03b07a`, and the complete product fingerprint changes from `0x2830ff0999500281` to `0x794d37cdf2b28b65`.
+
+All three anchors were genuinely recorded afresh through `tests/focusfp.sh --rec --only 1,6,12` against mock seed 1 using the supported Linux host simulator and Xvfb. `tools/plxnative-rec rerecord` checked the synthetic vocabulary and preserved each anchor. The official replay driver then graded all three in Targets and Resolve modes at 960×540 with two workers: six `SAME` verdicts, zero differences across every reported counter. These recordings verify the ordinary pages across the census change; they do not claim to exercise the household's private launcher configuration, LG video plane, or native decoder.
