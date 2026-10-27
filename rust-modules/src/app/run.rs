@@ -2736,6 +2736,10 @@ fn finish_landed_play(app: &mut App, resume_prepared: bool) {
     }
 }
 
+// Family owns the video surface even before a decoder binds. Its local cover must be able
+// to paint on that first/offline frame, rather than waiting behind the bound-plane predicate.
+fn video_surface_frame(app:&App,player:bool)->bool{player||app.family_home.is_some()||app.pages.video_plane_frame()}
+
 /// The draw phase, entered only on a presenting frame: `clear_opaque_region` at entry, the
 /// viewport, glass owners' prepare, the page pass, the surfaces bottom-to-top and the
 /// instruments. Returns the viewport for the host-side screenshot that follows the draw.
@@ -2780,7 +2784,7 @@ pub(crate) unsafe fn draw(app: &mut App, fr: &mut Frame) -> (i32, i32, i32, i32)
                 plx_ui::guard(|| {
                     // Every screen declaring a bound video plane needs the same transparent
                     // composition. The route alone cannot identify a background-video page.
-                    if fr.player || app.pages.video_plane_frame() {
+                    if video_surface_frame(app,fr.player) {
                         // `plx_platform::tv::window::clear_opaque_region()` used to be called here. It is
                         // §3.3 step 10's privileged call and belongs at the container library's
                         // OWN draw entry, which `app.pages.draw` below reaches in this same frame:
@@ -2797,9 +2801,7 @@ pub(crate) unsafe fn draw(app: &mut App, fr: &mut Frame) -> (i32, i32, i32, i32)
                         plx_platform::tv::window::frame_probe_acquired();
                         // The private local forest is ready without a network request. Keep it
                         // behind the live dock until THIS playback session has shown a picture.
-                        if app.pages.video_plane_frame(){
-                            if let Some(home)=app.family_home.as_ref(){home.draw_cover(app.player.video_plane_bound,plx_media::player::seen_frame());}
-                        }
+                        if let Some(home)=app.family_home.as_ref(){home.draw_cover(app.player.video_plane_bound,plx_media::player::seen_frame());}
                         // ONE resolve of which surface owns the "pipeline is working" signal,
                         // handed to both the transport and the read-out, so the centred read-out
                         // and the transport's inline spinner can never both light in the same
@@ -3703,6 +3705,18 @@ mod lifecycle_regression_tests {
         unsafe {
             ingest_sdl_event(app, fr);
         }
+    }
+
+    #[test]
+    fn unbound_family_uses_the_local_cover_composition_before_any_video_exists(){
+        let _serial=plx_base::testlock::serial();
+        let mut app=app();
+        app.family_home=Some(super::super::family_home::Runtime::new(super::super::family_home::Config::empty()));
+        super::super::bridge::show_page(&mut app.pages,AppArg::FamilyHome{apps:Vec::new()});
+        for tick in 0..24 {frame(&mut app,tick*16);}
+        assert!(!app.player.video_plane_bound);
+        assert!(!app.pages.video_plane_frame());
+        assert!(video_surface_frame(&app,false),"cold/offline Family must draw the cover, not enter ordinary black page composition");
     }
 
     #[test]
