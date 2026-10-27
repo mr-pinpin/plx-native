@@ -2153,7 +2153,7 @@ mod foreground_resume_tests {
         }
         // The one difference from `DidForeground`: it would claim a parked state.
         let mut parked = ForegroundLifecycle::<u64> {
-            state: ForegroundState::Suspended { id: 1, saved_ns: 5, clock: paused }, next_id: 1 };
+            state: ForegroundState::Suspended { id: 1, saved_ns: 5, clock: paused }, next_id: 1, ..Default::default() };
         assert!(matches!(parked.claim(ForegroundInput::DidForeground), ForegroundClaimResult::Effect(_)));
     }
 }
