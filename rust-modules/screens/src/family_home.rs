@@ -12,7 +12,7 @@ use crate::registry::{AppLike, AppFx, LoopReq};
 pub struct Application { pub id: String, pub title: String, pub icon: Option<plx_ui::owned_image::Pixels> }
 
 #[derive(Clone,PartialEq,Eq,Default)]
-pub struct Status {pub clock:String,pub date:String}
+pub struct Status {pub clock:String,pub date:String,pub network:String}
 
 const TILE_W: f32 = 192.0;
 const TILE_H: f32 = 192.0;
@@ -51,7 +51,7 @@ impl LogicalState for FamilyHomeScreen {
     fn write(&self, c: &mut Canon) {
         c.u32(self.entry.0).u32(self.idle_ms).f32(self.alpha.pos).f32(self.alpha.vel);
         self.pop.write_motion(c);
-        c.str(&self.status.clock).str(&self.status.date);
+        c.str(&self.status.clock).str(&self.status.date).str(&self.status.network);
         c.seq(self.apps.len());
         for app in &self.apps { c.str(&app.id).str(&app.title); }
     }
@@ -107,6 +107,7 @@ impl<H:AppLike> Screen<H> for FamilyHomeScreen {
         if let (Ok(clock),Ok(date))=(CString::new(self.status.clock.as_str()),CString::new(self.status.date.as_str())){
             let text=plx_ui::label::Label::new(clock.as_ptr(),theme::size::BODY,theme::TEXT_PRIMARY);
             text.draw(p,Rect::new(80.0,56.0,300.0,48.0));
+            if let Ok(network)=CString::new(self.status.network.as_str()){plx_ui::label::Label::new(network.as_ptr(),theme::size::BODY,theme::TEXT_SECONDARY).h(plx_ui::label::HAlign::Center).draw(p,Rect::new(plx_ui::consts::SCR_W/2.0-240.0,56.0,480.0,48.0));}
             plx_ui::label::Label::new(date.as_ptr(),theme::size::BODY,theme::TEXT_SECONDARY).h(plx_ui::label::HAlign::Right).draw(p,Rect::new(plx_ui::consts::SCR_W-580.0,56.0,500.0,48.0));
         }
         if let (Some(first),Some(last))=(self.rect(0),self.rect(self.apps.len().saturating_sub(1))){
@@ -125,6 +126,9 @@ impl<H:AppLike> Screen<H> for FamilyHomeScreen {
             }
             f.stop(p,Stop{key:self.key(i),rect,rest_rect:rect,clip:Rect::FULL,hover:Hover::Focus,activate:Activate::Press});
         }
+    }
+    fn render_report(&self)->plx_ui::frame::RenderReport{
+        self.icons.iter().map(|icon|icon.render_report()).fold(plx_ui::frame::RenderReport::NONE,|mut total,icon|{total.textures+=icon.textures;total.bytes+=icon.bytes;total})
     }
     fn render(&self)->RenderStrategy{RenderStrategy::Page}
     fn focus_source(&self)->FocusSource{FocusSource::Engine}

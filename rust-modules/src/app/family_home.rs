@@ -7,7 +7,7 @@ pub(crate) struct Config {version:u32,pub background:Option<Source>,apps:Vec<App
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ApplicationConfig{id:String,title:String,#[serde(default)] icon:Option<String>,#[serde(skip)] pixels:Option<plx_ui::owned_image::Pixels>}
-pub(crate) struct Runtime {config:Config,retry_at:u32,status_at:u32}
+pub(crate) struct Runtime {config:Config,retry_at:u32,status_at:u32,snapshot_at:u32,snapshot:Option<Snapshot>,worker:Option<std::sync::mpsc::Receiver<Option<Snapshot>>>}
 impl Config {
     pub fn load()->Result<Self,String>{
         use std::io::Read;
@@ -29,16 +29,26 @@ impl Config {
 }
 impl Runtime {
     pub fn application(&self,index:u8)->Option<&str>{self.config.apps.get(index as usize).map(|app|app.id.as_str())}
-    pub fn new(config:Config)->Self{Self{config,retry_at:0,status_at:0}}
+    pub fn new(config:Config)->Self{Self{config,retry_at:0,status_at:0,snapshot_at:0,snapshot:None,worker:None}}
     pub fn status(&mut self,now:u32)->Option<plx_screens::family_home::Status>{
         if now.wrapping_sub(self.status_at)>=u32::MAX/2{return None;}
         self.status_at=now.wrapping_add(1000);
+        if let Some(worker)=&self.worker {
+            match worker.try_recv(){Ok(snapshot)=>{self.snapshot=snapshot;self.worker=None;},Err(std::sync::mpsc::TryRecvError::Disconnected)=>{self.worker=None;},Err(std::sync::mpsc::TryRecvError::Empty)=>{}}
+        }
+        if self.worker.is_none()&&now.wrapping_sub(self.snapshot_at)<u32::MAX/2{
+            self.snapshot_at=now.wrapping_add(25000);
+            let (send,recv)=std::sync::mpsc::sync_channel(1);
+            if plx_base::task::spawn_small("family status",move||{let _=send.send(read_snapshot());}){self.worker=Some(recv);}
+        }
+        let unix=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).ok()?.as_secs();
+        let network=self.snapshot.as_ref().filter(|snapshot|snapshot.fresh(unix)).map(|snapshot|snapshot.label.clone()).unwrap_or_else(||"—".into());
         let reading=plx_platform::wall_clock::read()?;
         let locale=plx_platform::i18n::current();
         let clock=if locale.clock()==plx_platform::i18n::Clock::H12{
             format!("{}:{:02} {}",if reading.hour%12==0{12}else{reading.hour%12},reading.minute,if reading.hour<12{"AM"}else{"PM"})
         }else{format!("{:02}:{:02}",reading.hour,reading.minute)};
-        Some(plx_screens::family_home::Status{clock,date:locale.date(reading.year,reading.month,reading.day).unwrap_or_default()})
+        Some(plx_screens::family_home::Status{clock,date:locale.date(reading.year,reading.month,reading.day).unwrap_or_default(),network})
     }
     pub fn tick(&mut self,ps:&mut plx_media::route::PlaybackSession,pa:&mut plx_media::player::adapter::PlayerAdapter,now:u32){
         let Some(source)=&self.config.background else{return;};
@@ -62,4 +72,35 @@ fn load_icon(path:&str)->Option<plx_ui::owned_image::Pixels>{
     if w==0||h==0||w>512||h>512{return None;}
     let (w,h,rgba)=plx_gfx::img::img_decode_owned(&bytes)?;
     plx_ui::owned_image::Pixels::new(w.try_into().ok()?,h.try_into().ok()?,rgba)
+}
+
+struct Snapshot {observed:u64,label:String}
+impl Snapshot {fn fresh(&self,now:u64)->bool{self.observed<=now.saturating_add(60)&&now.saturating_sub(self.observed)<=120}}
+fn read_snapshot()->Option<Snapshot>{
+    use std::io::Read;
+    let mut bytes=Vec::new();std::fs::File::open("/media/internal/pinpin-family/home-status.json").ok()?.take(4097).read_to_end(&mut bytes).ok()?;
+    if bytes.len()>4096{return None;}
+    snapshot(&bytes)
+}
+fn snapshot(bytes:&[u8])->Option<Snapshot>{
+    let value:serde_json::Value=serde_json::from_slice(bytes).ok()?;
+    if value["schema"].as_u64()!=Some(1){return None;}
+    let observed=value["observedAtUnix"].as_u64()?;
+    let network=&value["network"];
+    if network["status"].as_str()!=Some("ready")||network["connected"].as_bool()!=Some(true){return None;}
+    let label=match network["transport"].as_str()?{
+        "wifi"=>match network["signalBars"].as_u64(){Some(bars@0..=4)=>format!("Wi-Fi · {bars}/4"),_=>"Wi-Fi".into()},
+        "ethernet"=>"Ethernet".into(),_=>return None,
+    };
+    Some(Snapshot{observed,label})
+}
+#[cfg(test)]
+mod snapshot_tests{
+    use super::*;
+    #[test]
+    fn real_provider_contract_is_fresh_only_with_a_valid_observation_and_connection(){
+        let bytes=br#"{"schema":1,"observedAtUnix":1000,"network":{"status":"ready","transport":"wifi","connected":true,"internet":true,"signalBars":3},"weather":{"status":"unconfigured","city":null,"temperatureC":null}}"#;
+        let result=snapshot(bytes).unwrap();assert_eq!(result.label,"Wi-Fi · 3/4");assert!(result.fresh(1120));assert!(!result.fresh(1121));assert!(!result.fresh(939));
+        for corrupt in [String::from_utf8_lossy(bytes).replace("\"observedAtUnix\":1000,",""),String::from_utf8_lossy(bytes).replace("\"connected\":true","\"connected\":false"),String::from_utf8_lossy(bytes).replace("\"ready\"","\"stale\"")]{assert!(snapshot(corrupt.as_bytes()).is_none());}
+    }
 }
