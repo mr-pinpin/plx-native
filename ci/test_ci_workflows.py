@@ -217,10 +217,10 @@ class NightlyHomebrewRepository(unittest.TestCase):
         self.assertEqual(re.findall(r"homebrew-manifest: (.*)", code("nightly.yml")), ["true"])
         self.assertEqual(re.findall(r"homebrew-manifest: (.*)", code("release.yml")), ["true"])
 
-    def test_only_debug_is_refused_a_manifest(self):
+    def test_only_non_catalog_flavors_are_refused_a_manifest(self):
         build = code("build-package.yml")
         self.assertIn('[ "$HOMEBREW_MANIFEST" = true ] && [ "$FLAVOR" != stable ] && [ "$FLAVOR" != nightly ]', build)
-        self.assertNotIn('[ "$FLAVOR" != stable ]', build)
+        self.assertNotIn('[ "$HOMEBREW_MANIFEST" = true ] && [ "$FLAVOR" != stable ]; then', build)
 
     def test_the_manifest_is_named_for_the_app_id_it_describes(self):
         build = code("build-package.yml")
