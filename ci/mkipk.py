@@ -236,10 +236,12 @@ def stage_resources(repo: Path, data: Path, app: dict) -> list:
     if not src.is_dir():
         return []
     base_title = json.loads((repo / "pkg" / "appinfo.json").read_text())["title"]
-    if not app["title"].startswith(base_title):
+    identity = next((item for item in flavor.INSTALL_IDENTITIES if item["app_id"] == app["id"]), {})
+    declared_title = identity.get("display_title")
+    if not app["title"].startswith(base_title) and app["title"] != declared_title:
         raise SystemExit(f"flavour title {app['title']!r} is not {base_title!r} plus a suffix — "
                          "stage_resources can no longer reapply it; see ci/flavor.py")
-    suffix = app["title"][len(base_title):]
+    suffix = app["title"][len(base_title):] if app["title"].startswith(base_title) else None
     locales = []
     for loc_dir in sorted(p for p in src.iterdir() if p.is_dir()):
         f = loc_dir / "appinfo.json"
@@ -256,7 +258,8 @@ def stage_resources(repo: Path, data: Path, app: dict) -> list:
         # Rewritten rather than copied, so the staged bytes are this script's output on every host:
         # `ensure_ascii=False` keeps the translations readable in the archive, UTF-8 with no BOM is
         # LG's stated requirement for non-Latin text, and the key order is the input file's.
-        body = json.dumps({**loc, "title": loc["title"] + suffix},
+        localized_title = loc["title"] + suffix if suffix is not None else declared_title
+        body = json.dumps({**loc, "title": localized_title},
                           ensure_ascii=False, indent=2) + "\n"
         (out_dir / "appinfo.json").write_bytes(body.encode("utf-8"))
         locales.append(loc_dir.name)
