@@ -94,7 +94,7 @@ fn worker(job:impl FnOnce()->Reply+Send+'static)->Option<Receiver<Reply>>{
     let (send,recv)=std::sync::mpsc::sync_channel(1);
     plx_base::task::spawn_small("shared scene",move||{let _=send.send(job());}).then_some(recv)
 }
-fn request(url:&str,body:serde_json::Value,millis:u32)->Option<serde_json::Value>{
+fn request(url:&str,body:serde_json::Value,millis:u16)->Option<serde_json::Value>{
     let body=serde_json::to_vec(&body).ok()?;
     let timeout=plx_net::net::Timeouts{connect_s:2,total_s:20,total_ms:millis.into(),low_speed_bps:0,low_speed_s:0};
     let response=plx_net::net::request(url,&["Content-Type: application/json".into()],"POST",Some(&body),timeout,false,Some(16384),None)?;
