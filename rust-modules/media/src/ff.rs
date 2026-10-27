@@ -2574,7 +2574,11 @@ extern "C" fn read_cb(op: *mut c_void, dst: *mut u8, n: c_int) -> c_int {
                     checkpoint,
                 ),
                 Src::Local(_) if dst.is_null() || n <= 0 => 0,
-                Src::Local(file) => file.read(std::slice::from_raw_parts_mut(dst,n as usize)).map(|n|n as c_int).unwrap_or(-1),
+                Src::Local(file) => match file.read(std::slice::from_raw_parts_mut(dst,n as usize)) {
+                    Ok(n) => n as c_int,
+                    Err(error) if error.kind()==std::io::ErrorKind::Interrupted => continue,
+                    Err(_) => { s.io_failed=true; return AVERROR_IO; }
+                },
                 Src::Idle => return AVERROR_EOF,
             };
             let wake =
