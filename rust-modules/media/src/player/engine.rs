@@ -912,6 +912,30 @@ fn fps_class(fps: f64) -> u32 {
     fps.ceil() as u32
 }
 
+/// A UHD decoder-table row states a resolution/rate pair, not a global FHD rate cap.
+/// LG's webOS TV25 specification lists H264 FHD60 for all models alongside UHD30.
+/// Keep the established VOD/HLS intersection untouched; only an owned managed-live
+/// FHD source uses the already device-measured FHD60 Load allocation.
+fn managed_sink_envelope(
+    video:LoadVideo,raster:(u16,u16),fps:f64,caps:&plx_platform::devcaps::Caps,
+    measured:bool,clock:crate::route::BackgroundClock,
+)->SinkEnvelope{
+    let mut env=sink_envelope(video,raster,fps,caps,measured);
+    if clock==crate::route::BackgroundClock::LiveJoin&&video==LoadVideo::H264
+        &&raster.0>0&&raster.1>0&&raster.0<=1920&&raster.1<=1088
+        &&fps.is_finite()&&fps>30.0&&fps<=60.0&&measured
+        &&caps.h264_row.0>=3840&&caps.h264_row.1>=2160&&caps.h264_row.2==30 {
+        env.fps=fps_class(fps);
+    }
+    env
+}
+fn build_video_payload(video:LoadVideo,env:SinkEnvelope)->String{
+    PAYLOAD_V.replace("H264",video.payload_name())
+        .replace(r#""maxWidth":1920"#,&format!(r#""maxWidth":{}"#,env.w))
+        .replace(r#""maxHeight":1080"#,&format!(r#""maxHeight":{}"#,env.h))
+        .replace(r#""maxFrameRate":30"#,&format!(r#""maxFrameRate":{}"#,env.fps))
+}
+
 fn sink_envelope_now(ps: &crate::route::PlaybackSession, video: LoadVideo) -> SinkEnvelope {
     if let Some(spec) = plx_base::devtrig::read("sinkmax") {
         if let Some(env) = parse_sinkmax(&spec) {
@@ -924,12 +948,13 @@ fn sink_envelope_now(ps: &crate::route::PlaybackSession, video: LoadVideo) -> Si
         }
         log(&format!("sinkmax: unparseable spec {spec:?} — ignored"));
     }
-    sink_envelope(
+    managed_sink_envelope(
         video,
         crate::route::sink_max_raster(ps),
         crate::route::stream_fps(ps),
         plx_platform::devcaps::caps(),
         plx_platform::devcaps::measured() && !crate::route::forced_direct_play(ps),
+        if crate::route::is_background(ps){crate::route::background_clock(ps)}else{crate::route::BackgroundClock::Content},
     )
 }
 
@@ -1492,10 +1517,7 @@ fn start_bufferfeed_inner(
             SHARED.dg_load_a.store(0, Ordering::Relaxed);
             if crate::route::is_background(ps) {
                 sink_env = sink_envelope_now(ps, lv);
-                stream_payload = PAYLOAD_V.replace("H264", lv.payload_name())
-                    .replace(r#""maxWidth":1920"#, &format!(r#""maxWidth":{}"#, sink_env.w))
-                    .replace(r#""maxHeight":1080"#, &format!(r#""maxHeight":{}"#, sink_env.h))
-                    .replace(r#""maxFrameRate":30"#, &format!(r#""maxFrameRate":{}"#, sink_env.fps));
+                stream_payload = build_video_payload(lv,sink_env);
                 stream_payload.as_str()
             } else {
             // A static payload declares its own envelope; say so on the `load:` line.
@@ -6280,6 +6302,26 @@ mod sink_envelope_tests {
         let ps = crate::route::PlaybackSession::IDLE;
         let payload = build_av_payload(&ps, "H264", "DTS", ENVELOPE_FHD60);
         assert!(payload.contains(r#""audio":"DTS""#));
+    }
+
+    #[test]
+    fn managed_fhd60_payload_does_not_apply_a_uhd30_row_to_the_fhd_rate(){
+        use crate::route::BackgroundClock::{Content,LiveJoin};
+        let c=caps((4096,2176,30),(4096,2176,60));
+        let env=managed_sink_envelope(LoadVideo::H264,(1920,1080),60.0,&c,true,LiveJoin);
+        assert_eq!(env,ENVELOPE_FHD60);
+        let payload:serde_json::Value=serde_json::from_str(&build_video_payload(LoadVideo::H264,env)).unwrap();
+        let option=&payload["args"][0]["option"];
+        assert_eq!(option["adaptiveStreaming"]["maxFrameRate"],60);
+        assert_eq!(option["adaptiveStreaming"]["maxWidth"],1920);
+        assert_eq!(option["adaptiveStreaming"]["maxHeight"],1080);
+        assert_eq!(option["needAudio"],false);
+        assert_eq!(option["lowDelayMode"],true);
+        assert_eq!(managed_sink_envelope(LoadVideo::H264,(1920,1080),60.0,&c,true,Content).fps,30);
+        assert_eq!(managed_sink_envelope(LoadVideo::H264,(3840,2160),60.0,&c,true,LiveJoin).fps,30);
+        assert_eq!(managed_sink_envelope(LoadVideo::H264,(1920,1080),30.0,&c,true,LiveJoin).fps,30);
+        assert_eq!(managed_sink_envelope(LoadVideo::H264,(1920,1080),60.0,&caps((1920,1080,30),(3840,2160,60)),true,LiveJoin).fps,30);
+        assert_eq!(managed_sink_envelope(LoadVideo::H264,(1920,1080),60.0,&caps((3840,2160,25),(3840,2160,60)),true,LiveJoin).fps,25);
     }
 
     const DEV_SET: ((u32, u32, u32), (u32, u32, u32)) = ((4096, 2304, 60), (4096, 2176, 60));
