@@ -17,7 +17,8 @@ once.
 Their IDs and storage identities remain the original independent flavors. Only
 `id`, `title`, `iconColor` and (for nightly only) the dated package `version` may
 move. Other fields, including entry point, permissions, lifecycle and icon
-filenames, remain single-sourced in `pkg/appinfo.json`. The selftest checks the
+filenames, remain single-sourced in `pkg/appinfo.json`. The family launcher alone disables
+LG's launch splash and spinner so returning Home does not display Cinema artwork. The selftest checks the
 exact changed-key sets, so presentation cannot silently change runtime behavior.
 
 **THE STABLE TRANSFORM IS THE IDENTITY, and that is asserted rather than intended** (`--selftest`,
@@ -107,6 +108,11 @@ def appinfo_for(flavor: str, nightly_date: "str | None" = None) -> dict:
     identity = next(identity for identity in INSTALL_IDENTITIES if identity["name"] == flavor)
     a["title"] = identity.get("display_title", f"{a['title']} {suffix}")
     a["iconColor"] = identity.get("icon_color", a["iconColor"])
+    if flavor == "family":
+        # Native Home is the destination, not a Cinema startup interstitial. These documented
+        # SAM presentation flags are family-only; the three Cinema descriptors stay unchanged.
+        a["noSplashOnLaunch"] = True
+        a["spinnerOnLaunch"] = False
     # NIGHTLY ONLY: the package version itself moves — to the next minor (or next patch, on a
     # maintenance line) with the CUT DATE as its patch (`version_rule.nightly_package_triplet`),
     # e.g. `0.7.20260919`. Two properties are wanted and both come from that. It is ahead of
@@ -280,8 +286,14 @@ def _selftest() -> int:
     family = appinfo_for("family")
     check(family["id"] == f"{STABLE_ID}.family" and family["title"] == "PinPin Home",
           "family launcher has its own install identity and title")
-    check({k for k in tracked_appinfo if family.get(k) != tracked_appinfo[k]} == {"id", "title", "iconColor"},
-          "family presentation leaves stable runtime descriptor fields unchanged")
+    check({k for k in tracked_appinfo.keys() | family.keys() if family.get(k) != tracked_appinfo.get(k)} == {"id", "title", "iconColor", "noSplashOnLaunch", "spinnerOnLaunch"},
+          "family changes only identity and explicit launch presentation")
+    check(family.get("noSplashOnLaunch") is True and family.get("spinnerOnLaunch") is False,
+          "family opens directly without the Cinema splash or launch spinner")
+    check(all("noSplashOnLaunch" not in appinfo_for(f, "20261027")
+              and "spinnerOnLaunch" not in appinfo_for(f, "20261027")
+              for f in ("stable", "debug", "nightly")),
+          "Cinema profiles retain their original launch presentation")
     check(f"Package: {STABLE_ID}.family" in control_for(tracked_control, "family"),
           "family control file uses the independent launcher identity")
 
