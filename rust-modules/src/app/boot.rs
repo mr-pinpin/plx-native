@@ -1083,6 +1083,7 @@ pub(crate) fn direct_trigger_server() -> Result<plx_plex::plex::ServerId, String
 /// Which screen the boot gate landed on — see the gate itself in `plex_run`, which is where the
 /// order of its four cases is argued.
 pub(crate) enum BootTo {
+    FamilyHome,
     Home,
     Login,
     Profiles,
@@ -1612,6 +1613,8 @@ pub(crate) unsafe fn construct(
             Err(error) => { log(&format!("boot: local server configuration refused: {error}")); (None, Some(error)) }
         }
     };
+    let family_config = (!controlled && plx_base::paths::flavour() == Some("family")).then(||
+        super::family_home::Config::load().unwrap_or_else(|error| {log(&error);super::family_home::Config::empty()}));
     let forced_login = !controlled && crate::dev::scenarios::login_forced();
     let dev_primary = (!forced_login && !dev_token.is_empty()).then(|| {
         let origin = crate::dev::scenarios::pms_origin()
@@ -1651,9 +1654,11 @@ pub(crate) unsafe fn construct(
     // (`bridge::SeatWatch`). See `dev::scenarios::arm_audio_enhancements`'s own doc.
     if !controlled { crate::dev::scenarios::arm_audio_enhancements(); }
     let primary_binding = initial.as_ref().map(|initial| initial.primary_client);
+    let family_mode = family_config.is_some();
     let activate_session = |bridge: &mut super::bridge::Bridge,
         pages: &mut plx_ui::dispatch::Dispatcher<super::bridge::AppHost>,
         rec: &mut super::recorder::Recplay| {
+        if family_mode { return BootTo::FamilyHome; }
         if forced_login {
         super::bridge::execute_session_command(pages, plx_session::auth::SessionCmd::StartLogin);
         pages.frame_with(bridge, plx_machine::machine::Tick::default(), Vec::new(), Vec::new(),
@@ -2090,6 +2095,7 @@ pub(crate) unsafe fn construct(
     // the loop's first frame either way, and the route below is a page underneath it.
     let mut owes_consent_question = false;
     let route = match boot_to {
+        BootTo::FamilyHome => AppArg::FamilyHome { apps: family_config.as_ref().map(|config|config.applications()).unwrap_or_default() },
         // **Both Home arms ask, and the shared call is the point.** This is the one boot that
         // has no earlier hook — an install already signed in, either never asked or asked
         // against an older policy — and the sign-in's question has to come before every
@@ -2191,6 +2197,7 @@ pub(crate) unsafe fn construct(
     // ready to dispatch a delivered command within one frame. Compile-time no-op otherwise.
     if !controlled { crate::lab::start_control(); }
     let mut app = App {
+        family_home: family_config.map(super::family_home::Runtime::new),
         last_input,
         loop_t,
         iters_ct,

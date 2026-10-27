@@ -105,6 +105,7 @@ extern "C" {
 // loop body reads exactly as before. `run_application` itself is phase 1b.
 pub(crate) mod adapters;
 pub(crate) mod boot;
+mod family_home;
 pub(crate) mod bootstrap;
 #[cfg(test)]
 pub(crate) use bootstrap::HomeIo;
@@ -228,6 +229,7 @@ pub(crate) struct Adapters {
 /// helpers they still reach through `&mut App` need to be visible outside this module's subtree.
 /// Nothing here becomes `pub` — only as wide as the crate.
 pub(crate) struct App {
+    family_home: Option<family_home::Runtime>,
     last_input: u32,
     loop_t: u32,
     iters_ct: i32,

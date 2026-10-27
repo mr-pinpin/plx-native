@@ -17,6 +17,10 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
+/// Launch an installed application through the platform's existing bus adapter.
+/// The port schedules its bounded system call off the frame thread.
+pub fn application(id: &str) { (super::port().launch_application)(id); }
+
 /// How many payloads wait for the next frame. The app takes them every frame; more than a handful
 /// can only mean the loop is not running (before SDL_Init has returned, or a stall), and the
 /// newest are the ones that matter, so the oldest are dropped. 8 is far past a cold argv link plus

@@ -1452,7 +1452,7 @@ fn start_bufferfeed_inner(
     // fixed payloads.)
     // dev A/B: /tmp/plxnative-noaudio feeds video only (needAudio:false + skip es=2) to isolate
     // whether the audio ES (E-AC3/Atmos) is what stalls the sink on 4K HEVC.
-    let no_audio = plx_base::devtrig::flag("noaudio");
+    let no_audio = crate::route::is_background(ps) || plx_base::devtrig::flag("noaudio");
     crate::ff::set_feed_audio(!no_audio);
     let stream_payload;
     // Every arm below assigns this — the static payloads through `static_envelope`, the streamed
@@ -1488,6 +1488,14 @@ fn start_bufferfeed_inner(
         SHARED.dg_load_v.store(lv.diag_code(), Ordering::Relaxed);
         if no_audio {
             SHARED.dg_load_a.store(0, Ordering::Relaxed);
+            if crate::route::is_background(ps) {
+                sink_env = sink_envelope_now(ps, lv);
+                stream_payload = PAYLOAD_V.replace("H264", lv.payload_name())
+                    .replace(r#""maxWidth":1920"#, &format!(r#""maxWidth":{}"#, sink_env.w))
+                    .replace(r#""maxHeight":1080"#, &format!(r#""maxHeight":{}"#, sink_env.h))
+                    .replace(r#""maxFrameRate":30"#, &format!(r#""maxFrameRate":{}"#, sink_env.fps));
+                stream_payload.as_str()
+            } else {
             // A static payload declares its own envelope; say so on the `load:` line.
             sink_env = static_envelope(lv);
             match lv {
@@ -1497,6 +1505,7 @@ fn start_bufferfeed_inner(
                     stream_payload = renamed_static_payload(lv);
                     stream_payload.as_str()
                 }
+            }
             }
         } else {
             // LG's pipeline names E-AC3 "AC3 PLUS" (Dolby Digital Plus), NOT "EAC3" — the

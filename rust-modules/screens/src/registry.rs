@@ -1363,6 +1363,7 @@ pub enum ConsentCmd {
 /// the dispatcher yet. Each names the phase that retires it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum LoopReq {
+    FamilyLaunch(u8),
     /// BACK at a root the platform owns (Home, the FIRST consent question): hand the screen to
     /// the television. Retires with the Navigation root rule (phase 12).
     BackAtRoot,
@@ -1752,6 +1753,7 @@ pub mod page_id {
 /// `decision-alert`, `settings-*`) never press.
 #[derive(Clone, PartialEq, Eq)]
 pub enum AppArg {
+    FamilyHome { apps: Vec<crate::family_home::Application> },
     LibraryMenu(LibraryMenuArg),
     /// The profile menu (`screens::account_menu`), presented on the shared `ModalStack` over
     /// whichever bar-wearing page the chip was pressed on. **It carries nothing**, and that is the
@@ -1887,6 +1889,7 @@ impl LogicalState for AppArg {
             Self::Profiles => { c.u32(0).u32(1); }
             Self::Onboard => { c.u32(0).u32(2); }
             Self::Home => { c.u32(0).u32(3); }
+            Self::FamilyHome { apps } => { c.u32(0).u32(14).seq(apps.len()); for app in apps { c.str(&app.id).str(&app.title); } }
             Self::Library => { c.u32(0).u32(6); }
             Self::Search => { c.u32(0).u32(9); }
             // 11, after Player's 10: a page tag is a screen's identity in a recording, allocated forward.
@@ -1914,7 +1917,8 @@ impl plx_ui::screen::ScreenArg for AppArg {
             AppArg::Home | AppArg::Library | AppArg::Search | AppArg::Watchlist => Chrome::TabBar,
             // The two sub-pages of a library keep the bar, as the Library they are pushed over.
             AppArg::LibraryCollections { .. } | AppArg::LibraryRecommended { .. } => Chrome::TabBar,
-            AppArg::Login
+            AppArg::FamilyHome { .. }
+            | AppArg::Login
             | AppArg::Profiles
             | AppArg::Onboard
             | AppArg::Player
@@ -1967,6 +1971,7 @@ impl plx_ui::screen::ScreenArg for AppArg {
             AppArg::Profiles => 2,
             AppArg::Onboard => 3,
             AppArg::Home => page_id::HOME.0,
+            AppArg::FamilyHome { .. } => 30,
             AppArg::Library => page_id::LIBRARY.0,
             // 28 and 29, forward of the catalog page's 27.
             AppArg::LibraryCollections { .. } => page_id::LIBRARY_COLLECTIONS.0,
@@ -2153,6 +2158,7 @@ where
                 )));
                 Box::new(screen)
             }
+            AppArg::FamilyHome { apps } => Box::new(crate::family_home::FamilyHomeScreen::new(entry, apps.clone())),
             AppArg::Home => {
                 let mut page = crate::home::HomeScreen::new(entry, id);
                 if let PageMemory::Home(memory) = &ret.memory { page.restore(memory); }
@@ -2309,6 +2315,7 @@ pub fn every_surface_arg() -> Vec<AppArg> {
             | AppArg::Profiles
             | AppArg::Onboard
             | AppArg::Home
+            | AppArg::FamilyHome { .. }
             | AppArg::Library
             | AppArg::LibraryCollections { .. }
             | AppArg::LibraryRecommended { .. }

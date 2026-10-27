@@ -1178,3 +1178,20 @@ mod tests {
         assert!(!is_realtek_k5lp_family("K5LP"));
     }
 }
+
+/// App launch is a bounded LS2 request on the existing platform worker seam.
+pub fn launch_application(id: &str) {
+    if id.is_empty() || id.len()>128 || !id.bytes().all(|c| c.is_ascii_alphanumeric() || c==b'.' || c==b'-' || c==b'_') { return; }
+    let id=id.to_owned();
+    let _=plx_base::task::spawn_small("platform application",move || {
+        #[cfg(all(not(feature="hostsim"),not(any(test,feature="test-support"))))]
+        {
+            let payload=serde_json::json!({"id":id}).to_string();
+            if ls2::call_once("luna://com.webos.applicationManager/launch",&payload).is_err() {
+                plx_base::eventlog::log("family: application launch request failed");
+            }
+        }
+        #[cfg(any(feature="hostsim",test,feature="test-support"))]
+        { let _=id; }
+    });
+}

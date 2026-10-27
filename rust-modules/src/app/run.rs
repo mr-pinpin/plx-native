@@ -1748,6 +1748,7 @@ fn playback_may_run(app: &App) -> bool {
 /// seek — everything that reads `fr.now` and no `dt`.
 pub(crate) unsafe fn playback_tick(app: &mut App, fr: &mut Frame) {
         park_on_decoder_release(app);
+        if playback_may_run(app) { if let Some(home)=app.family_home.as_mut() { home.tick(&mut app.player.session,&mut app.adapters.player,fr.now); } }
         if playback_may_run(app) {
             if is_started() {
                 plx_media::player::pump(&mut app.player.session, &mut app.adapters.player, fr.now);
@@ -1838,6 +1839,7 @@ pub(crate) unsafe fn playback_tick(app: &mut App, fr: &mut Frame) {
             crate::dev::scenarios::maybe_replay_after_eos(app, handed_off_to_up_next);
         } else if playback_may_run(app)
             && plx_media::player::ended()
+            && !plx_media::route::is_background(&app.player.session)
             && super::content::off_route_orphan(
                 app.adapters.player.is_live(),
                 plx_media::route::is_preview(&app.player.session),
@@ -2276,6 +2278,7 @@ fn loop_requests(app: &mut App) {
             Err(req) => req,
         };
         match req {
+            plx_screens::registry::LoopReq::FamilyLaunch(index) => { if let Some(id)=app.family_home.as_ref().and_then(|home|home.application(index)) { plx_platform::tv::launch::application(id); } },
             // BACK at a root the platform owns. The FIRST consent stage is the fourth such root
             // and the one the 2026-09-03 rule could not reach until this phase — see the key
             // ladder's dispatcher arm for why a `Popover` could not tell the two BACKs apart.
@@ -2643,7 +2646,7 @@ fn finish_landed_play(app: &mut App, resume_prepared: bool) {
             &mut app.adapters.player,
         );
         let preview = plx_media::route::is_preview(&app.player.session);
-        if started && !matches!(app.route(), AppArg::Player) && !preview {
+        if started && !matches!(app.route(), AppArg::Player) && !preview && !plx_media::route::is_background(&app.player.session) {
             log("pump_play: engine started off-route → restoring AppArg::Player");
             // The page is being taken off screen by a LANDING, not by a navigation. It
             // carried a `forward_leave(app.route())` teardown here until phase 12; every
@@ -2983,6 +2986,7 @@ pub(crate) unsafe fn report(app: &mut App, fr: &mut Frame) {
         // string the heartbeat prints; the `Screen` beside it is what the probe DISPATCHES on,
         // and its match is exhaustive so a new route cannot fingerprint as nothing.
         let probe_screen = |app: &App| match app.route() {
+                AppArg::FamilyHome { .. } => crate::focusprobe::Screen::Home,
                 // The escape/retry/restart control is the screen's only focusable element, and
                 // it appears and disappears on the `ESCAPE_AFTER_MS`/`QR_ESCAPE_AFTER_MS` clocks
                 // with no phase change of its own — `focusprobe::Screen::Login`'s own doc says
