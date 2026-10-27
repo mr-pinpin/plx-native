@@ -219,7 +219,7 @@ class NightlyHomebrewRepository(unittest.TestCase):
 
     def test_only_debug_is_refused_a_manifest(self):
         build = code("build-package.yml")
-        self.assertIn('[ "$HOMEBREW_MANIFEST" = true ] && [ "$FLAVOR" = debug ]', build)
+        self.assertIn('[ "$HOMEBREW_MANIFEST" = true ] && [ "$FLAVOR" != stable ] && [ "$FLAVOR" != nightly ]', build)
         self.assertNotIn('[ "$FLAVOR" != stable ]', build)
 
     def test_the_manifest_is_named_for_the_app_id_it_describes(self):

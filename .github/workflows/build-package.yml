@@ -31,7 +31,7 @@ on:
         type: string
         required: true
       flavor:
-        description: 'FLAVOR to build — stable, debug, or nightly.'
+        description: 'FLAVOR to build — stable, debug, nightly, or family.'
         type: string
         required: true
       nightly-date:
@@ -128,8 +128,8 @@ jobs:
         run: |
           set -euo pipefail
           case "$FLAVOR" in
-            stable|debug|nightly) ;;
-            *) echo "::error::flavor must be stable, debug, or nightly, got '$FLAVOR'"; exit 1 ;;
+            stable|debug|nightly|family) ;;
+            *) echo "::error::flavor must be stable, debug, nightly, or family, got '$FLAVOR'"; exit 1 ;;
           esac
           case "$TELEMETRY" in
             production|development|none) ;;
@@ -140,7 +140,7 @@ jobs:
           # project's own repository, `ci/nightly.py repo-json`). Debug is a developer build with
           # no listing anywhere, so a manifest for it would name a package nothing tracks. Caught
           # here rather than left to fail later on a stray file mismatch.
-          if [ "$HOMEBREW_MANIFEST" = true ] && [ "$FLAVOR" = debug ]; then
+          if [ "$HOMEBREW_MANIFEST" = true ] && [ "$FLAVOR" != stable ] && [ "$FLAVOR" != nightly ]; then
             echo "::error::homebrew-manifest is only meaningful for flavor: stable or nightly, got '$FLAVOR'"
             exit 1
           fi

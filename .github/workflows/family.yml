@@ -1,0 +1,28 @@
+name: Family TV package
+
+on:
+  push:
+    branches: [pinpin/family-home]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: family-package-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    if: github.repository == 'mr-pinpin/plx-native'
+    uses: ./.github/workflows/build-package.yml
+    with:
+      ref: ${{ github.sha }}
+      flavor: family
+      telemetry: none
+      artifact: family-tv-package
+      homebrew-manifest: false
+      source-asset: true
+      fwcompat: true
+      upload-debug-files: false
+      caches: true
