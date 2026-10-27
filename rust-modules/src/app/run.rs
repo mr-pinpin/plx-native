@@ -477,6 +477,7 @@ unsafe fn prepare_window(app: &mut App, fr: &mut Frame) {
     //   there is no pixel to show over the picture — film included — wherever it runs; it stays
     //   here so the upload's cost is bounded by the budget and off the draw.
     if fr.present {
+        if let Some(home)=app.family_home.as_mut(){home.prepare_cover(&mut app.pages.budget);}
         // A Tracks/More page's text, recorded in `update` or, on the mount frame, in the overlay's
         // `prepare` (`PanelMotion::prewarm_text`), and uploaded here: `fr.present` already carries the window-activity gate, so a frame that
         // does not present, or one while the window is backgrounded, uploads nothing.
@@ -2794,6 +2795,11 @@ pub(crate) unsafe fn draw(app: &mut App, fr: &mut Frame) -> (i32, i32, i32, i32)
                         plx_platform::tv::window::frame_probe_waiting();
                         plx_base::diag::spans::span("clear", || glClear(GL_COLOR_BUFFER_BIT));
                         plx_platform::tv::window::frame_probe_acquired();
+                        // The private local forest is ready without a network request. Keep it
+                        // behind the live dock until THIS playback session has shown a picture.
+                        if app.pages.video_plane_frame(){
+                            if let Some(home)=app.family_home.as_ref(){home.draw_cover(app.player.video_plane_bound,plx_media::player::seen_frame());}
+                        }
                         // ONE resolve of which surface owns the "pipeline is working" signal,
                         // handed to both the transport and the read-out, so the centred read-out
                         // and the transport's inline spinner can never both light in the same

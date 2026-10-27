@@ -3,11 +3,11 @@ use plx_media::player::background::Source;
 use plx_screens::family_home::Application;
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct Config {version:u32,pub background:Option<Source>,apps:Vec<ApplicationConfig>,#[serde(default)] controls:Option<super::family_input::Config>,#[serde(default)] rendering:Option<super::family_scene::Config>}
+pub(crate) struct Config {version:u32,pub background:Option<Source>,apps:Vec<ApplicationConfig>,#[serde(default)] controls:Option<super::family_input::Config>,#[serde(default)] rendering:Option<super::family_scene::Config>,#[serde(default)] cover:Option<String>,#[serde(skip)] cover_pixels:Option<plx_ui::owned_image::Pixels>}
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ApplicationConfig{id:String,title:String,#[serde(default)] icon:Option<String>,#[serde(default)] scene:Option<String>,#[serde(skip)] pixels:Option<plx_ui::owned_image::Pixels>}
-pub(crate) struct Runtime {config:Config,retry_at:u32,status_at:u32,snapshot_at:u32,snapshot:Option<Snapshot>,worker:Option<std::sync::mpsc::Receiver<Option<Snapshot>>>,input:Option<super::family_input::Bridge>,scene_click:bool,scene:Option<super::family_scene::Controller>,managed:Option<Source>,foreground:bool,wake:bool}
+pub(crate) struct Runtime {config:Config,cover_image:plx_ui::owned_image::OwnedImage,retry_at:u32,status_at:u32,snapshot_at:u32,snapshot:Option<Snapshot>,worker:Option<std::sync::mpsc::Receiver<Option<Snapshot>>>,input:Option<super::family_input::Bridge>,scene_click:bool,scene:Option<super::family_scene::Controller>,managed:Option<Source>,foreground:bool,wake:bool}
 impl Config {
     pub fn load()->Result<Self,String>{
         use std::io::Read;
@@ -22,14 +22,23 @@ impl Config {
             return Err("family configuration rejected".into());
         }
         for app in &mut config.apps { app.pixels=app.icon.as_deref().and_then(load_icon); }
+        config.cover_pixels=config.cover.as_deref().and_then(load_icon);
         Ok(config)
     }
     pub fn applications(&self)->Vec<Application>{self.apps.iter().map(|app|Application{id:app.id.clone(),title:app.title.clone(),icon:app.pixels.clone()}).collect()}
-    pub fn empty()->Self{Self{version:1,background:None,apps:Vec::new(),controls:None,rendering:None}}
+    pub fn empty()->Self{Self{version:1,background:None,apps:Vec::new(),controls:None,rendering:None,cover:None,cover_pixels:None}}
 }
 impl Runtime {
     pub fn application(&self,index:u8)->Option<&str>{self.config.apps.get(index as usize).map(|app|app.id.as_str())}
-    pub fn new(mut config:Config)->Self{let scene=config.rendering.take().map(super::family_scene::Controller::new);let input=config.controls.as_ref().and_then(super::family_input::Bridge::start);Self{config,retry_at:0,status_at:0,snapshot_at:0,snapshot:None,worker:None,input,scene_click:false,scene,managed:None,foreground:false,wake:false}}
+    pub fn new(mut config:Config)->Self{let scene=config.rendering.take().map(super::family_scene::Controller::new);let input=config.controls.as_ref().and_then(super::family_input::Bridge::start);Self{config,cover_image:Default::default(),retry_at:0,status_at:0,snapshot_at:0,snapshot:None,worker:None,input,scene_click:false,scene,managed:None,foreground:false,wake:false}}
+    /// Local render resource: prepared once, before the first launcher draw. It stays resident
+    /// across application switches and covers a failed or offline stream indefinitely.
+    pub fn prepare_cover(&mut self,budget:&mut plx_ui::frame::Budget){
+        if let Some(pixels)=&self.config.cover_pixels{self.cover_image.prepare(pixels,budget);}
+    }
+    pub fn draw_cover(&self,bound:bool,seen_frame:bool){
+        if cover_required(bound,seen_frame){self.cover_image.draw(plx_ui::Painter::root(),plx_ui::Rect::FULL,0.0);}
+    }
     pub fn launch_scene(&mut self,index:u8)->bool{
         let Some(scene)=self.config.apps.get(index as usize).and_then(|app|app.scene.as_deref())else{return false;};
         if let Some(controller)=&mut self.scene{controller.select(scene);true}else{false}
@@ -98,6 +107,23 @@ impl Runtime {
             }
             self.retry_at=now.wrapping_add(5000);
         }
+    }
+}
+
+// A successful Load/ACB bind is not a picture. Session-scoped seen_frame also remains true
+// during an in-place seek, when the seek-scoped frame counter temporarily returns to zero.
+fn cover_required(bound:bool,seen_frame:bool)->bool{!bound||!seen_frame}
+
+#[cfg(test)]
+mod cover_tests{
+    use super::*;
+    #[test]
+    fn cached_forest_covers_cold_resume_offline_and_reload_until_a_picture_is_presented(){
+        assert!(cover_required(false,false),"cold start and offline must show local forest");
+        assert!(cover_required(true,false),"a bound decoder without a picture must stay covered");
+        assert!(!cover_required(true,true),"reveal only an actual presented video frame");
+        assert!(cover_required(false,true),"an unbound plane cannot expose a stale session flag");
+        assert!(cover_required(true,false),"a real reload needs its cover again");
     }
 }
 
