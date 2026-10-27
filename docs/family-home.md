@@ -42,10 +42,14 @@ The top-level `pointerShuttle: true` optionally steers this passive looping
 background through existing native pause, absolute-seek and resume operations.
 It is off by default. Fresh horizontal pointer displacement from the center
 sets desired signed timeline velocity, proportional up to eight seconds of source time
-per second at the edges; the centre advances at normal +1× through that same
-exclusive controlled timeline. Centre movement does not hand control to a
-competing ambient clock or freeze the picture.
-Absolute seeks are coalesced to at most four per second and wait for loading,
+per second at the edges. The centre uses continuous native Play at normal +1×
+while the gesture retains logical ownership. It never pauses an already playing
+centre or approximates normal playback with repeated seeks. Returning from
+paused seek steering resumes once the in-flight seek settles and Play is accepted;
+moving outside the centre pauses once before seek steering begins. The same
+local loop mechanism may seek to zero near the end while centre Play owns it,
+retaining the decoder rather than waiting for EOS.
+Left/right absolute seeks are coalesced to at most four per second and wait for loading,
 pending seeks and seek preroll to settle. Frame-clock gaps are bounded and
 targets wrap within the measured duration. This approximates reverse motion
 through seeks; it does not claim a hardware negative playback-rate API.
