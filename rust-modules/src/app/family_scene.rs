@@ -142,7 +142,7 @@ mod tests {
     #[test]
     fn scene_change_during_heartbeat_survives_old_failure_and_can_return_home(){
         let mut controller=controller();controller.active=Some(grant("forest"));controller.select("atlas");
-        controller.accept(Reply::Heartbeat(true),true);assert!(controller.next<=super::clock::now());
+        controller.accept(Reply::Heartbeat(true),true);assert!(controller.next<=super::super::clock::now());
         assert!(matches!(controller.accept(Reply::Heartbeat(false),true),Some(Change::Passive)));
         assert!(controller.active.is_none());assert_eq!(controller.desired.as_deref(),Some("atlas"));assert_eq!(controller.stops.len(),1);
         assert!(controller.home());assert!(!controller.home());
