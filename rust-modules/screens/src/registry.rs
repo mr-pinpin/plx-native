@@ -2569,7 +2569,9 @@ pub const SCREEN_SHAPES: &[&str] = &[
 // were re-recorded against it; the previous pin was 0x0803_2f8d_c828_6d70.
 // FamilyHome adds its explicit application argument and owned dock/status logical state.
 // Existing records are regenerated from real simulator flows for this intentional census bump.
-const SCREEN_SHAPES_PIN: u64 = 0x58b3_3eb9_6f03_b07a;
+// FamilyHomeV2 adds the logical immersive flag so accepted Atlas scenes hide the dock.
+// Re-record the synthetic anchors through the simulator when taking this census change.
+const SCREEN_SHAPES_PIN: u64 = 0xba0b_3c77_da54_b7b7;
 
 #[cfg(test)]
 mod arg_tests {
