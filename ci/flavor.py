@@ -112,6 +112,8 @@ def appinfo_for(flavor: str, nightly_date: "str | None" = None) -> dict:
         # Native Home is the destination, not a Cinema startup interstitial. These documented
         # SAM presentation flags are family-only; the three Cinema descriptors stay unchanged.
         # https://www.webosbrew.org/develop/guides/appinfo/#nosplashonlaunch-boolean
+        # SAM accepts a default Home target only when the app declares this category.
+        a["appCategory"] = ["home"]
         a["noSplashOnLaunch"] = True
         a["spinnerOnLaunch"] = False
     # NIGHTLY ONLY: the package version itself moves — to the next minor (or next patch, on a
@@ -287,8 +289,13 @@ def _selftest() -> int:
     family = appinfo_for("family")
     check(family["id"] == f"{STABLE_ID}.family" and family["title"] == "PinPin Home",
           "family launcher has its own install identity and title")
-    check({k for k in tracked_appinfo.keys() | family.keys() if family.get(k) != tracked_appinfo.get(k)} == {"id", "title", "iconColor", "noSplashOnLaunch", "spinnerOnLaunch"},
+    check({k for k in tracked_appinfo.keys() | family.keys() if family.get(k) != tracked_appinfo.get(k)} == {"id", "title", "iconColor", "appCategory", "noSplashOnLaunch", "spinnerOnLaunch"},
           "family changes only identity and explicit launch presentation")
+    check(family.get("appCategory") == ["home"],
+          "family declares SAM Home eligibility without changing Cinema categories")
+    check(all("appCategory" not in appinfo_for(f, "20261027")
+              for f in ("stable", "debug", "nightly")),
+          "Cinema profiles do not become default Home applications")
     check(family.get("noSplashOnLaunch") is True and family.get("spinnerOnLaunch") is False,
           "family opens directly without the Cinema splash or launch spinner")
     check(all("noSplashOnLaunch" not in appinfo_for(f, "20261027")
