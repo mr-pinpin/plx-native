@@ -6,7 +6,7 @@ use plx_screens::family_home::Application;
 pub(crate) struct Config {version:u32,#[serde(default,rename="pointerDirectionRate")]pointer_direction_rate:bool,#[serde(default,rename="pointerDirectionVideo")]pointer_direction_video:bool,#[serde(default,rename="warmBackgroundTrial")]warm_background_trial:bool,#[serde(default,rename="pointerShuttle")]pointer_shuttle:bool,#[serde(default,rename="pointerDiagnostics")]pointer_diagnostics:bool,pub background:Option<Source>,apps:Vec<ApplicationConfig>,#[serde(default)] controls:Option<super::family_input::Config>,#[serde(default)] rendering:Option<super::family_scene::Config>,#[serde(default,rename="cover")] _retired_cover:Option<String>}
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
-struct ApplicationConfig{id:String,title:String,#[serde(default)] icon:Option<String>,#[serde(default)] scene:Option<String>,#[serde(skip)] pixels:Option<plx_ui::owned_image::Pixels>}
+struct ApplicationConfig{id:String,title:String,#[serde(default)] icon:Option<String>,#[serde(default)] scene:Option<String>,#[serde(default,rename="launchParams")] launch_params:Option<serde_json::Value>,#[serde(skip)] pixels:Option<plx_ui::owned_image::Pixels>}
 pub(crate) struct Runtime {config:Config,rate:super::family_direction::RateOwner<plx_media::route::RouteStartAttempt>,direction:super::family_direction::Direction,shuttle:super::family_shuttle::Shuttle,trace_input_at:Option<u32>,trace_action_at:Option<u32>,trace_state_at:Option<u32>,retry_at:u32,status_at:u32,snapshot_at:u32,snapshot:Option<Snapshot>,snapshot_requested:u32,worker:Option<std::sync::mpsc::Receiver<(u32,Option<Snapshot>)>>,input:Option<super::family_input::Bridge>,scene_click:bool,scene:Option<super::family_scene::Controller>,managed:Option<Source>,foreground:bool,wake:bool,presentation_sent:Option<bool>}
 impl Config {
     pub fn load()->Result<Self,String>{
@@ -18,7 +18,7 @@ impl Config {
         let mut config:Self=serde_json::from_slice(&bytes).map_err(|_|"family configuration invalid")?;
         if (config.pointer_direction_rate&&!config.pointer_direction_video)||((config.pointer_shuttle||config.pointer_direction_video)&&!config.background.as_ref().is_some_and(|source|source.looping))||config.rendering.as_ref().is_some_and(|rendering|!rendering.valid())||config.version!=1||!(1..=5).contains(&config.apps.len())||config.apps.iter().map(|app|&app.id).collect::<std::collections::BTreeSet<_>>().len()!=config.apps.len()||config.apps.iter().any(|app|app.id.is_empty()||app.id.len()>128
             ||!app.id.bytes().all(|c|c.is_ascii_alphanumeric()||c==b'.'||c==b'-'||c==b'_')||app.title.is_empty()||app.title.len()>80
-            ||app.title.chars().any(char::is_control)||app.scene.as_ref().is_some_and(|scene|!super::family_scene::scene_id(scene)||config.rendering.is_none()))||config.background.as_ref().is_some_and(|source|!source.valid())||config.controls.as_ref().is_some_and(|controls|!controls.valid(config.background.as_ref().map(|source|source.url.as_str()))){
+            ||app.launch_params.as_ref().is_some_and(|params|!plx_platform::tv::launch::valid_parameters(params))||app.title.chars().any(char::is_control)||app.scene.as_ref().is_some_and(|scene|!super::family_scene::scene_id(scene)||config.rendering.is_none()))||config.background.as_ref().is_some_and(|source|!source.valid())||config.controls.as_ref().is_some_and(|controls|!controls.valid(config.background.as_ref().map(|source|source.url.as_str()))){
             return Err("family configuration rejected".into());
         }
         for app in &mut config.apps { app.pixels=app.icon.as_deref().and_then(load_icon); }
@@ -33,6 +33,7 @@ impl Runtime {
     pub fn immersive(&self)->bool{self.scene.as_ref().is_some_and(super::family_scene::Controller::immersive)}
     pub fn take_presentation(&mut self)->Option<bool>{let immersive=self.immersive();if self.presentation_sent==Some(immersive){None}else{self.presentation_sent=Some(immersive);Some(immersive)}}
     pub fn application(&self,index:u8)->Option<&str>{self.config.apps.get(index as usize).map(|app|app.id.as_str())}
+    pub fn application_params(&self,index:u8)->Option<&serde_json::Value>{self.config.apps.get(index as usize).and_then(|app|app.launch_params.as_ref())}
     pub fn new(mut config:Config)->Self{let scene=config.rendering.take().map(super::family_scene::Controller::new);let input=if config.pointer_shuttle||config.pointer_direction_video{None}else{config.controls.as_ref().and_then(super::family_input::Bridge::start)};Self{config,rate:Default::default(),direction:Default::default(),shuttle:Default::default(),trace_input_at:None,trace_action_at:None,trace_state_at:None,retry_at:0,status_at:0,snapshot_at:0,snapshot:None,snapshot_requested:0,worker:None,input,scene_click:false,scene,managed:None,foreground:false,wake:false,presentation_sent:None}}
     pub fn launch_scene(&mut self,index:u8)->bool{
         let Some(scene)=self.config.apps.get(index as usize).and_then(|app|app.scene.as_deref())else{return false;};
@@ -225,7 +226,7 @@ mod control_tests{
         let mut config=Config::empty();assert!(!config.pointer_shuttle);
         config.pointer_shuttle=true;
         config.background=Some(serde_json::from_str(r#"{"url":"http://192.0.2.1/library/parts/1/file.mp4","videoCodec":"hevc","fps":30,"width":3840,"height":2160}"#).unwrap());
-        config.apps.push(ApplicationConfig{id:"example".into(),title:"Example".into(),icon:None,scene:None,pixels:None});
+        config.apps.push(ApplicationConfig{id:"example".into(),title:"Example".into(),icon:None,scene:None,launch_params:None,pixels:None});
         let mut runtime=Runtime::new(config);assert!(runtime.controls_enabled());
         runtime.control_pointer(200.0,300.0,false);
         assert_eq!(runtime.shuttle.step(0,true,1_000_000_000,120_000_000_000),super::super::family_shuttle::Action::Pause);
@@ -235,7 +236,7 @@ mod control_tests{
     }
     #[test]
     fn a_new_dock_press_cannot_lose_its_release_after_a_missing_scene_button_up(){
-        let mut config=Config::empty();config.apps.push(ApplicationConfig{id:"example".into(),title:"Example".into(),icon:None,scene:None,pixels:None});
+        let mut config=Config::empty();config.apps.push(ApplicationConfig{id:"example".into(),title:"Example".into(),icon:None,scene:None,launch_params:None,pixels:None});
         let mut runtime=Runtime::new(config);runtime.input=Some(super::super::family_input::Bridge::for_test());
         runtime.control_pointer(100.0,100.0,false);assert!(runtime.control_click(true));
         // The old scene's button-up was lost. A new dock gesture owns both of its edges.
@@ -267,5 +268,21 @@ mod trace_tests{
         assert!(!Config::empty().pointer_diagnostics);
         let mut last=None;assert!(trace_due(&mut last,u32::MAX-50,250));
         assert!(!trace_due(&mut last,49,250));assert!(trace_due(&mut last,199,250));
+    }
+}
+
+#[cfg(test)]
+mod launch_parameter_tests {
+    use super::*;
+    #[test]
+    fn private_metadata_reaches_runtime_without_changing_screen_applications() {
+        let config:Config=serde_json::from_value(serde_json::json!({"version":1,"background":null,"apps":[{"id":"com.example.stream","title":"Book","launchParams":{"directLaunch":true,"host_uuid":"example-host","host_app_id":42}}]})).unwrap();
+        assert_eq!(config.applications()[0].title,"Book");
+        let runtime=Runtime::new(config);
+        assert_eq!(runtime.application(0),Some("com.example.stream"));
+        assert_eq!(runtime.application_params(0).unwrap()["host_app_id"],42);
+        assert!(runtime.application_params(1).is_none());
+        let legacy:Config=serde_json::from_value(serde_json::json!({"version":1,"background":null,"apps":[{"id":"com.example.legacy","title":"Legacy"}]})).unwrap();
+        assert!(Runtime::new(legacy).application_params(0).is_none());
     }
 }
