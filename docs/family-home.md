@@ -31,6 +31,15 @@ A private, versioned configuration lives at `/media/internal/.com.beb.plxnative.
 }
 ```
 
+An application entry may include `launchParams`, a JSON object forwarded unchanged
+as `params` through the existing application-manager launch request. For example,
+`{"id":"org.example.reader","title":"Book","launchParams":{"section":"atlas"}}`
+opens that application's own route without adding another dock icon. Entries without
+parameters retain the original ID-only request. Parameters allow at most eight
+nested levels, 256 values and 4096 encoded bytes; invalid parameters reject the
+private configuration. A configured managed `scene` retains priority over an
+external application launch. This metadata does not enter persisted screen state.
+
 The optional application icons must be local PNGs under `/media/internal/`, at most one MiB and 512 by 512 pixels. Missing artwork retains a focusable fallback tile. Titles remain application metadata, but no title labels are drawn above or inside dock controls. The application reads and decodes artwork during configuration bootstrap; the shared UI resource uploads textures during its existing prepare budget. Icons grow with the shared focus spring. The dock material uses half its previous opacity while icons remain opaque. Its translucent theme tint does not blur the separate hardware video plane.
 
 The top band displays local system time and the existing localized calendar date. A presentation adapter samples wall time separately from the application's frame/replay clock and delivers status to the screen. The dock and top band remain visible at all times; inactivity never turns the launcher into a video-only view. Resume and ordinary Home relaunch show the dock immediately, independently of video buffering; a parked frame gap does not consume the new idle interval. Root Back stays in the launcher and returns an active scene to its default.
