@@ -60,11 +60,34 @@ pub fn take_outcomes() -> Vec<Outcome> {
     std::mem::take(&mut *OUTCOMES.lock().unwrap_or_else(|p| p.into_inner()))
 }
 
-/// Whether the system's launch reply accepted the request: `returnValue` true, nothing else.
+/// How the system answered one launch, told apart by WHO failed: the request never completed
+/// (the bus could not be set up, or nobody answered in time), or the application manager answered
+/// and said no, or it said yes. Only `returnValue: true` is success.
+#[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(any(feature = "hostsim", test, feature = "test-support"), allow(dead_code))]
-pub(crate) fn reply_accepted(reply: &str) -> bool {
-    serde_json::from_str::<serde_json::Value>(reply).ok()
-        .and_then(|v| v.get("returnValue").and_then(serde_json::Value::as_bool)) == Some(true)
+pub(crate) enum Grade {
+    Accepted,
+    /// A reply with `returnValue` false (or none): the platform's own `errorCode` / `errorText`,
+    /// kept short, for the log only.
+    Rejected { code: Option<i64>, text: String },
+    /// No reply: the stage that failed, or `timeout`.
+    Transport(String),
+}
+
+/// The longest `errorText` kept from a reply: one short platform-authored line.
+const MAX_ERROR_TEXT: usize = 120;
+
+/// Grade the application manager's reply to a launch.
+#[cfg_attr(any(feature = "hostsim", test, feature = "test-support"), allow(dead_code))]
+pub(crate) fn grade_reply(reply: &str) -> Grade {
+    let value = serde_json::from_str::<serde_json::Value>(reply).ok();
+    let field = |name: &str| value.as_ref().and_then(|v| v.get(name));
+    if field("returnValue").and_then(serde_json::Value::as_bool) == Some(true) { return Grade::Accepted; }
+    Grade::Rejected {
+        code: field("errorCode").and_then(serde_json::Value::as_i64),
+        text: field("errorText").and_then(serde_json::Value::as_str)
+            .map(|t| t.chars().take(MAX_ERROR_TEXT).collect()).unwrap_or_default(),
+    }
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -172,12 +195,22 @@ mod tests {
 
     #[test]
     fn only_a_true_return_value_is_an_accepted_launch() {
-        assert!(reply_accepted(r#"{"returnValue":true}"#));
-        assert!(reply_accepted(r#"{"returnValue": true, "id":"vkvideo"}"#));
-        assert!(!reply_accepted(r#"{"returnValue":false,"errorText":"not found"}"#));
-        assert!(!reply_accepted(r#"{"errorText":"returnValue true"}"#));
-        assert!(!reply_accepted("not json"));
-        assert!(!reply_accepted(""));
+        assert_eq!(grade_reply(r#"{"returnValue":true}"#), Grade::Accepted);
+        assert_eq!(grade_reply(r#"{"returnValue": true, "id":"vkvideo"}"#), Grade::Accepted);
+        assert_eq!(grade_reply(r#"{"returnValue":false,"errorCode":-101,"errorText":"Application not found"}"#),
+            Grade::Rejected { code: Some(-101), text: "Application not found".into() },
+            "an application manager's refusal keeps its own words");
+        assert_eq!(grade_reply(r#"{"returnValue":false}"#), Grade::Rejected { code: None, text: String::new() });
+        for not_accepted in [r#"{"errorText":"returnValue true"}"#, r#"{"returnValue":"true"}"#, "not json", ""] {
+            assert!(matches!(grade_reply(not_accepted), Grade::Rejected { .. }), "{not_accepted}");
+        }
+    }
+
+    #[test]
+    fn a_long_error_text_is_cut_and_a_transport_failure_is_its_own_grade() {
+        let long = format!(r#"{{"returnValue":false,"errorText":"{}"}}"#, "x".repeat(500));
+        assert!(matches!(grade_reply(&long), Grade::Rejected { text, .. } if text.chars().count() == MAX_ERROR_TEXT));
+        assert_ne!(Grade::Transport("timeout".into()), Grade::Rejected { code: None, text: "timeout".into() });
     }
 
     #[test]

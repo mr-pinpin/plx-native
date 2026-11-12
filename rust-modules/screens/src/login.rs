@@ -81,6 +81,9 @@ use super::registry::{word, AppFx, AppLike, AppMsg, AuthLike, LoopReq};
 /// correction of its own.
 const CONTROL: u32 = 0;
 const DETAILS: u32 = 1;
+/// Cinema Kids' *Try again*, the read-out's second control where a retry can change the outcome
+/// (the local server is down). It takes *Details*' slot; the Kids read-out offers no report.
+const KIDS_RETRY: u32 = 5;
 /// The alert's cancel slot: *Not now* on the question, *Close* on the Details card.
 const ALERT_CANCEL: u32 = 3;
 const ALERT_SEND: u32 = 4;
@@ -884,7 +887,7 @@ impl Row {
 fn slot_of(elem: u32) -> Option<usize> {
     match elem {
         CONTROL => Some(0),
-        DETAILS => Some(1),
+        DETAILS | KIDS_RETRY => Some(1),
         _ => None,
     }
 }
@@ -1258,10 +1261,19 @@ impl LoginScreen {
         }
     }
 
-    /// Cinema Kids that could not load its local configuration or audience catalog: the boot's own
-    /// sentence is the error, and nothing the screen could retry changes it.
+    /// Cinema Kids on ANY failure read-out: the local configuration or audience catalog is missing
+    /// or refused (every boot refusal reads as the same invalid-configuration sentence, see
+    /// `SessionInit::captured_local_unavailable`), or the local server did not answer, or discovery
+    /// failed some other way. Kids has no account to fall back to, so VK Video leads them all.
     fn kids_unavailable(&self) -> bool {
-        self.kids_video && &*self.error == plx_platform::i18n::msg::browse_auth_local_configuration_invalid()
+        self.kids_video && self.phase == Phase::Error
+    }
+
+    /// Kids' failure where a retry can change the outcome: everything but the refused
+    /// configuration, which only an administrator's change repairs.
+    fn kids_retryable(&self) -> bool {
+        self.kids_unavailable()
+            && &*self.error != plx_platform::i18n::msg::browse_auth_local_configuration_invalid()
     }
 
     /// Whether the failure on screen is the no-server verdict: the account signed in and has
@@ -1303,6 +1315,7 @@ impl LoginScreen {
     /// Whether the held incident offers its *Details*: on the failure read-out, and on the QR
     /// screen while the wait itself is what failed, or for the helper failure on a save warning.
     fn details_offered(&self) -> bool {
+        if self.kids_retryable() { return false; }
         if let Some(warning) = self.persistence_warning {
             return warning.helper.is_some() && self.report.offer.as_ref().is_some_and(|o|
                 o.key.kind == plx_telemetry::telemetry::incident::IncidentKind::SaveFailed);
@@ -1323,7 +1336,9 @@ impl LoginScreen {
         let mut row = Row::default();
         let primary = self.control_kind().is_some();
         let report = |row: &mut Row| {
-            if self.details_offered() {
+            if self.kids_retryable() {
+                row.push(KIDS_RETRY);
+            } else if self.details_offered() {
                 row.push(DETAILS);
             }
         };
@@ -1400,8 +1415,9 @@ impl LoginScreen {
             ControlKind::UseAnotherAccount => true, // the no-server reason is always stated
             ControlKind::KidsVideo => true, // the unavailable-configuration reason is always stated
         };
-        let details = self.details_offered().then_some(plx_platform::i18n::msg::settings_login_details_c());
-        ([Some(label_for(kind)), details], has_reason)
+        let second = if self.kids_retryable() { Some(plx_platform::i18n::msg::browse_action_retry_c()) }
+            else { self.details_offered().then_some(plx_platform::i18n::msg::settings_login_details_c()) };
+        ([Some(label_for(kind)), second], has_reason)
     }
 
     /// The read-out's treatment — the one answer `draw` and the control geometry both read: the
@@ -1499,6 +1515,7 @@ impl LoginScreen {
                 self.open_details(fx);
                 self.sync_state();
             }
+            KIDS_RETRY => fx.push(Fx::App(AppFx::Session(auth::SessionCmd::Retry))),
             _ => self.activate(fx),
         }
     }
@@ -3218,34 +3235,74 @@ mod tests {
         assert!(fx.iter().any(|st| matches!(st.fx, Fx::App(AppFx::Session(auth::SessionCmd::Retry)))));
     }
 
-    fn kids_unavailable_screen(kids: bool) -> LoginScreen {
+    fn kids_error_screen(kids: bool, error: &str) -> LoginScreen {
         let mut s = bare_screen(Phase::Error, 0.0).with_kids_video(kids);
-        s.error = Arc::from(plx_platform::i18n::msg::browse_auth_local_configuration_invalid());
+        s.error = Arc::from(error);
         s
     }
 
+    fn has_loop_vk(fx: &[Stamped<SessionHost>]) -> bool {
+        fx.iter().any(|st| matches!(st.fx, Fx::App(AppFx::Loop(LoopReq::KidsVideo))))
+    }
+
+    fn has_session(fx: &[Stamped<SessionHost>], cmd: fn(&auth::SessionCmd) -> bool) -> bool {
+        fx.iter().any(|st| matches!(&st.fx, Fx::App(AppFx::Session(c)) if cmd(c)))
+    }
+
+    /// Every boot refusal reaches the screen as this sentence; no retry can change it, so VK Video
+    /// is the only control and holds the first stop.
     #[test]
-    fn kids_with_no_catalog_offers_vk_video_as_the_focused_primary_and_others_keep_retry() {
-        let mut kids = kids_unavailable_screen(true);
+    fn kids_with_a_refused_configuration_offers_vk_video_alone_and_focused() {
+        let invalid = plx_platform::i18n::msg::browse_auth_local_configuration_invalid();
+        let mut kids = kids_error_screen(true, invalid);
         assert_eq!(kids.control_kind(), Some(ControlKind::KidsVideo));
-        assert_eq!(kids.row().as_slice(), &[CONTROL], "the one action is the first stop, so focus lands on it");
+        assert_eq!(kids.row().as_slice(), &[CONTROL], "VK Video is the first, focused stop; nothing futile beside it");
         assert_eq!(label_for(ControlKind::KidsVideo).to_str().unwrap(), "VK Video");
         let (_, fx) = step_ev(&mut kids, &ScreenEvent::Activate(CONTROL));
-        assert!(fx.iter().any(|st| matches!(st.fx, Fx::App(AppFx::Loop(LoopReq::KidsVideo)))));
+        assert!(has_loop_vk(&fx));
         assert!(!fx.iter().any(|st| matches!(st.fx, Fx::App(AppFx::Session(_)))),
             "nothing is torn down or retried by the press");
-        // A second press asks again: the app's latch, not the screen, ignores it while in flight.
         let (_, again) = step_ev(&mut kids, &ScreenEvent::Activate(CONTROL));
-        assert!(again.iter().any(|st| matches!(st.fx, Fx::App(AppFx::Loop(LoopReq::KidsVideo)))));
-        // Parents / stable / debug are not Kids: the same read-out keeps its Try again.
-        let mut parents = kids_unavailable_screen(false);
+        assert!(has_loop_vk(&again), "the screen asks again; the app's latch ignores it while in flight");
+        let parents = kids_error_screen(false, invalid);
+        assert_eq!(parents.control_kind(), Some(ControlKind::Retry), "Parents is unchanged");
+        assert_eq!(parents.row().as_slice(), &[CONTROL]);
+    }
+
+    /// The configuration is present but the server is down: VK Video first, *Try again* one key
+    /// away on the shared row, and Retry still retries.
+    #[test]
+    fn kids_with_the_local_server_down_offers_vk_video_first_and_try_again_second() {
+        let down = plx_platform::i18n::msg::browse_auth_local_server_unavailable();
+        let mut kids = kids_error_screen(true, down);
+        assert_eq!(kids.control_kind(), Some(ControlKind::KidsVideo));
+        assert_eq!(kids.row().as_slice(), &[CONTROL, KIDS_RETRY]);
+        assert_eq!(slot_of(KIDS_RETRY), Some(1));
+        let (labels, _) = kids.readout_labels();
+        assert_eq!(labels[0].map(|l| l.to_str().unwrap()), Some("VK Video"));
+        assert_eq!(labels[1].map(|l| l.to_str().unwrap()), Some(plx_platform::i18n::msg::browse_action_retry()));
+        let (_, first) = step_ev(&mut kids, &ScreenEvent::Activate(CONTROL));
+        assert!(has_loop_vk(&first));
+        let (_, retry) = step_ev(&mut kids, &ScreenEvent::Activate(KIDS_RETRY));
+        assert!(has_session(&retry, |c| matches!(c, auth::SessionCmd::Retry)));
+        assert!(!has_loop_vk(&retry));
+        let parents = kids_error_screen(false, down);
+        assert_eq!(parents.control_kind(), Some(ControlKind::Retry), "Parents is unchanged");
+        assert_eq!(parents.row().as_slice(), &[CONTROL]);
+    }
+
+    #[test]
+    fn kids_with_any_other_failure_still_leads_with_vk_video() {
+        let mut kids = kids_error_screen(true, "something else");
+        assert_eq!(kids.control_kind(), Some(ControlKind::KidsVideo));
+        assert_eq!(kids.row().as_slice(), &[CONTROL, KIDS_RETRY]);
+        let (_, fx) = step_ev(&mut kids, &ScreenEvent::Activate(CONTROL));
+        assert!(has_loop_vk(&fx));
+        let parents = kids_error_screen(false, "something else");
         assert_eq!(parents.control_kind(), Some(ControlKind::Retry));
-        let (_, fx) = step_ev(&mut parents, &ScreenEvent::Activate(CONTROL));
-        assert!(!fx.iter().any(|st| matches!(st.fx, Fx::App(AppFx::Loop(_)))));
-        // Kids with some other failure keeps Try again too.
-        let mut other = bare_screen(Phase::Error, 0.0).with_kids_video(true);
-        other.error = Arc::from("something else");
-        assert_eq!(other.control_kind(), Some(ControlKind::Retry));
+        // A working phase is no failure read-out: Kids sees no VK Video there.
+        let working = bare_screen(Phase::Discovering, 0.0).with_kids_video(true);
+        assert_ne!(working.control_kind(), Some(ControlKind::KidsVideo));
     }
 
     #[test]

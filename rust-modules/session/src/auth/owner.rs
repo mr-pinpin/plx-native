@@ -5250,6 +5250,19 @@ mod tests {
         assert_eq!(owner.state.phase, Phase::Error);
     }
 
+    /// Every boot refusal for Cinema Kids lands on the one sentence the sign-in screen reads to lead
+    /// with VK Video (`LoginScreen::kids_unavailable`).
+    #[test]
+    fn every_kids_boot_refusal_reads_as_the_invalid_configuration_error() {
+        for refusal in ["Kids requires a valid matching audience catalog",
+            "Kids requires explicit local server configuration", "invalid local server configuration"] {
+            let saved = PersistedSession { client_id: "kids-refused".into(), ..Default::default() };
+            let init = SessionInit::captured_local_unavailable(saved, refusal.into());
+            assert_eq!(init.phase, Phase::Error, "{refusal}");
+            assert_eq!(init.error, plx_platform::i18n::msg::browse_auth_local_configuration_invalid(), "{refusal}");
+        }
+    }
+
     #[test]
     fn anonymous_local_discovery_runs_as_work_and_hands_off_only_the_matching_server() {
         let _g = plx_base::testlock::serial();

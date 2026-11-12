@@ -1192,12 +1192,22 @@ pub fn launch_application(id: &str, params: Option<&serde_json::Value>) {
     if !plx_base::task::spawn_small("platform application", move || {
         #[cfg(all(not(feature="hostsim"),not(any(test,feature="test-support"))))]
         {
-            let accepted = match ls2::call_once("luna://com.webos.applicationManager/launch", &payload) {
-                Ok(reply) => super::tv::launch::reply_accepted(&reply),
-                Err(_) => false,
+            use super::tv::launch::{grade_reply, Grade};
+            let grade = match ls2::call_once("luna://com.webos.applicationManager/launch", &payload) {
+                Ok(reply) => grade_reply(&reply),
+                Err(ls2::Fail::Timeout) => Grade::Transport("timeout".into()),
+                Err(ls2::Fail::Setup { stage, detail, .. }) => Grade::Transport(format!("{stage}: {detail}")),
             };
-            if !accepted { plx_base::eventlog::log("family: application launch request failed"); }
-            super::tv::launch::report(&owned, accepted);
+            // Who failed is the first thing a reader of the log needs: the call never completing is
+            // a different fault from the application manager answering no.
+            match &grade {
+                Grade::Accepted => {}
+                Grade::Rejected { code, text } => plx_base::eventlog::log(&format!(
+                    "launch: SAM rejected {owned} (errorCode={code:?} errorText={text:?})")),
+                Grade::Transport(why) => plx_base::eventlog::log(&format!(
+                    "launch: request for {owned} did not complete — {why}")),
+            }
+            super::tv::launch::report(&owned, grade == Grade::Accepted);
         }
         #[cfg(any(feature="hostsim",test,feature="test-support"))]
         { let _ = payload; super::tv::launch::report(&owned, true); }
