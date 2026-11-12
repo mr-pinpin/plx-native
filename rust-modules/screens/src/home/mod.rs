@@ -1940,6 +1940,7 @@ impl HomeScreen {
     }
 
     fn activate<H: HomeLike>(&mut self, elem: u32, cx: &Cx<'_, H>, fx: &mut Effects<'_, H>) {
+        if crate::registry::strip_kids_video(elem, fx) { return; }
         if let Some(req) = Self::request_for_strip(elem) {
             fx.push(Fx::App(AppFx::Home(req)));
             return;

@@ -1179,17 +1179,29 @@ mod tests {
     }
 }
 
-/// App launch is a bounded LS2 request on the existing platform worker seam.
+/// App launch is a bounded LS2 request on the existing platform worker seam. The system's reply
+/// is graded like [`launch_home`]'s and handed back to the frame thread through
+/// [`crate::tv::launch::report`]: `returnValue: true` is accepted; `false`, a timeout or a bus
+/// that could not be set up is a failure. A request that is not even well formed fails at once.
 pub fn launch_application(id: &str, params: Option<&serde_json::Value>) {
-    let Some(payload)=super::tv::launch::request(id, params) else { return; };
-    let _=plx_base::task::spawn_small("platform application",move || {
+    let Some(payload) = super::tv::launch::request(id, params) else {
+        super::tv::launch::report(id, false);
+        return;
+    };
+    let owned = id.to_owned();
+    if !plx_base::task::spawn_small("platform application", move || {
         #[cfg(all(not(feature="hostsim"),not(any(test,feature="test-support"))))]
         {
-            if ls2::call_once("luna://com.webos.applicationManager/launch",&payload).is_err() {
-                plx_base::eventlog::log("family: application launch request failed");
-            }
+            let accepted = match ls2::call_once("luna://com.webos.applicationManager/launch", &payload) {
+                Ok(reply) => super::tv::launch::reply_accepted(&reply),
+                Err(_) => false,
+            };
+            if !accepted { plx_base::eventlog::log("family: application launch request failed"); }
+            super::tv::launch::report(&owned, accepted);
         }
         #[cfg(any(feature="hostsim",test,feature="test-support"))]
-        { let _=payload; }
-    });
+        { let _ = payload; super::tv::launch::report(&owned, true); }
+    }) {
+        super::tv::launch::report(id, false);
+    }
 }

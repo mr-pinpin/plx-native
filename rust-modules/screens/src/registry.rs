@@ -1371,6 +1371,10 @@ pub enum ConsentCmd {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum LoopReq {
     FamilyLaunch(u8),
+    /// Cinema Kids' "VK Video" action (the strip pill, or the sign-in read-out when Kids cannot
+    /// load its catalog): open the native VK Video application. The application owns which app that
+    /// is, whether this install may, and the in-flight latch; a screen only asks.
+    KidsVideo,
     /// BACK at a root the platform owns (Home, the FIRST consent question): hand the screen to
     /// the television. Retires with the Navigation root rule (phase 12).
     BackAtRoot,
@@ -1407,6 +1411,14 @@ pub enum LoopReq {
     /// Lab builds only, and it changes no route: the tester stays where they were and the toast
     /// says what happened.
     AccountSendDiagnostics,
+}
+
+/// A press on the shared strip's Kids "VK Video" pill: the one request every page that wears the
+/// strip makes the same way. `true` when `elem` was that pill (and the request is pushed).
+pub fn strip_kids_video<H: Host<Elem = u32, Fx = AppFx>>(elem: u32, fx: &mut Effects<'_, H>) -> bool {
+    if elem != plx_ui::widgets::TAB_KEY_VK { return false; }
+    fx.push(plx_machine::machine::Fx::App(AppFx::Loop(LoopReq::KidsVideo)));
+    true
 }
 
 /// Any host that carries this bundle. The screens under `screens/` are written against it, so the
@@ -2157,7 +2169,8 @@ where
             // every remaining `app::input`/`app::run` call site drop its own `enter()`-equivalent
             // reset (see `input::enter_profiles_from_onboard`'s doc for the same argument made
             // about `screens::onboard` in 5b).
-            AppArg::Login => Box::new(crate::login::LoginScreen::new(entry, H::auth(cx))),
+            AppArg::Login => Box::new(crate::login::LoginScreen::new(entry, H::auth(cx))
+                .with_kids_video(plx_plex::plex::audience::is_kids_install())),
             AppArg::Profiles => {
                 let screen = crate::profiles::ProfilesScreen::new(entry, H::auth(cx));
                 fx.push(plx_machine::machine::Fx::App(AppFx::Session(

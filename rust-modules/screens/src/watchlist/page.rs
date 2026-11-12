@@ -1222,6 +1222,7 @@ impl WatchlistScreen {
     /// A non-card element activated, by an `Activate` (a `Bare` element, a pointer) or by a committed
     /// press on it (the strip's `Control` elements): Try again, the Sort & Filter pill, the strip.
     fn activate<H: ContentLike>(&mut self, elem: u32, fx: &mut Effects<'_, H>) -> Handled {
+        if crate::registry::strip_kids_video(elem, fx) { return Handled::Yes; }
         match elem {
             RETRY_ELEM => self.route(WatchlistOut::Retry, fx),
             PILL_ELEM => self.route(WatchlistOut::OpenOptions, fx),

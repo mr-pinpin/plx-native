@@ -2258,5 +2258,13 @@
   "browse.auth.local_configuration_invalid": {
     "value": "The local server configuration is unavailable or invalid.",
     "description": "Anonymous local mode: the private device configuration cannot be read or validated; cloud sign-in stays disabled."
+  },
+  "browse.kids.vk_video": {
+    "value": "VK Video",
+    "description": "Cinema Kids: the action that opens the installed VK Video application."
+  },
+  "browse.kids.vk_failed": {
+    "value": "VK Video could not be opened",
+    "description": "Cinema Kids: system toast when the VK Video application did not start."
   }
 }

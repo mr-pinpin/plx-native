@@ -18,12 +18,66 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
 /// Launch an installed application through the platform's existing bus adapter.
-/// The port schedules its bounded system call off the frame thread.
-pub fn application(id: &str) { (super::port().launch_application)(id, None); }
+/// The port schedules its bounded system call off the frame thread; what the system answered
+/// comes back through [`take_outcomes`].
+pub fn application(id: &str) {
+    #[cfg(any(test, feature = "test-support"))]
+    note_request(id);
+    (super::port().launch_application)(id, None);
+}
 
 /// Launch parameters are an object carried through the existing system launch call.
 pub fn application_with_params(id: &str, params: &serde_json::Value) {
-    if valid_parameters(params) { (super::port().launch_application)(id, Some(params)); }
+    if valid_parameters(params) {
+        #[cfg(any(test, feature = "test-support"))]
+        note_request(id);
+        (super::port().launch_application)(id, Some(params));
+    }
+}
+
+/// How one launch request ended: the id asked for and whether the system accepted it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Outcome { pub id: String, pub accepted: bool }
+
+/// Replies not yet taken by the frame thread. A launch is a person's key press, so more than a
+/// handful can only mean the loop stopped; the oldest are dropped.
+const MAX_OUTCOMES: usize = 8;
+static OUTCOMES: Mutex<Vec<Outcome>> = Mutex::new(Vec::new());
+static OUTCOME_WAITING: AtomicBool = AtomicBool::new(false);
+
+/// The port's worker reports the graded reply to a launch of `id`: `accepted` is the system's
+/// `returnValue: true`; a `false`, a timeout or a bus that could not be set up are all `false`.
+pub fn report(id: &str, accepted: bool) {
+    let mut out = OUTCOMES.lock().unwrap_or_else(|p| p.into_inner());
+    if out.len() == MAX_OUTCOMES { out.remove(0); }
+    out.push(Outcome { id: id.to_owned(), accepted });
+    OUTCOME_WAITING.store(true, Ordering::Release);
+}
+
+/// Every reply not yet seen, oldest first, once. Cheap enough for every frame.
+pub fn take_outcomes() -> Vec<Outcome> {
+    if !OUTCOME_WAITING.swap(false, Ordering::Acquire) { return Vec::new(); }
+    std::mem::take(&mut *OUTCOMES.lock().unwrap_or_else(|p| p.into_inner()))
+}
+
+/// Whether the system's launch reply accepted the request: `returnValue` true, nothing else.
+#[cfg_attr(any(feature = "hostsim", test, feature = "test-support"), allow(dead_code))]
+pub(crate) fn reply_accepted(reply: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(reply).ok()
+        .and_then(|v| v.get("returnValue").and_then(serde_json::Value::as_bool)) == Some(true)
+}
+
+#[cfg(any(test, feature = "test-support"))]
+static REQUESTED: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+#[cfg(any(test, feature = "test-support"))]
+fn note_request(id: &str) { REQUESTED.lock().unwrap_or_else(|p| p.into_inner()).push(id.to_owned()); }
+
+/// The ids [`application`] has been asked for, oldest first, and forgotten. **Test-only**: the only
+/// way a host test can grade a call whose whole effect is on a television.
+#[cfg(any(test, feature = "test-support"))]
+pub fn take_requested_for_test() -> Vec<String> {
+    std::mem::take(&mut *REQUESTED.lock().unwrap_or_else(|p| p.into_inner()))
 }
 
 /// Bound administrator-provided launch metadata before cloning or sending it.
@@ -109,6 +163,32 @@ mod tests {
         let mut nested = serde_json::json!({});
         for _ in 0..10 { nested = serde_json::json!({"nested":nested}); }
         assert!(!valid_parameters(&nested));
+    }
+
+    #[test]
+    fn the_vk_video_request_is_exactly_the_id() {
+        assert_eq!(request("vkvideo", None).unwrap(), r#"{"id":"vkvideo"}"#);
+    }
+
+    #[test]
+    fn only_a_true_return_value_is_an_accepted_launch() {
+        assert!(reply_accepted(r#"{"returnValue":true}"#));
+        assert!(reply_accepted(r#"{"returnValue": true, "id":"vkvideo"}"#));
+        assert!(!reply_accepted(r#"{"returnValue":false,"errorText":"not found"}"#));
+        assert!(!reply_accepted(r#"{"errorText":"returnValue true"}"#));
+        assert!(!reply_accepted("not json"));
+        assert!(!reply_accepted(""));
+    }
+
+    #[test]
+    fn a_reported_outcome_is_handed_over_once_in_order() {
+        let _serial = plx_base::testlock::serial();
+        let _ = take_outcomes();
+        report("a", false);
+        report("b", true);
+        assert_eq!(take_outcomes(), vec![
+            Outcome { id: "a".into(), accepted: false }, Outcome { id: "b".into(), accepted: true }]);
+        assert!(take_outcomes().is_empty());
     }
 
     #[test]

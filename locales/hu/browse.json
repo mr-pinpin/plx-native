@@ -268,5 +268,7 @@
   "browse.clock.no_key": "A TV órája hibásnak tűnik. Csatlakoztassa egyszer a TV-t az internethez, majd próbálja újra.",
   "browse.clock.key_changed": "A szerver kulcsa megváltozott. Csatlakoztassa egyszer a TV-t az internethez, hogy az alkalmazás újra ellenőrizhesse.",
   "browse.auth.local_server_unavailable": "A beállított helyi Plex-kiszolgáló nem található.",
-  "browse.auth.local_configuration_invalid": "A helyi kiszolgáló beállítása nem érhető el vagy érvénytelen."
+  "browse.auth.local_configuration_invalid": "A helyi kiszolgáló beállítása nem érhető el vagy érvénytelen.",
+  "browse.kids.vk_video": "VK Video",
+  "browse.kids.vk_failed": "A VK Video nem nyitható meg"
 }

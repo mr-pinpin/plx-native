@@ -16,10 +16,10 @@ pub(crate) enum Pill {
 }
 
 /// The strip's destination keys in strip order: Home, one key per type pill, the Watchlist
-/// bookmark, Search. The one
+/// bookmark, Search, and on Cinema Kids alone the VK Video pill after it. The one
 /// place that order is written; `refresh` publishes it and the pill maps below read it, so no
 /// map assumes which index Search holds.
-fn strip_keys(directory: DirectoryView<'_>) -> Vec<u32> {
+fn strip_keys(directory: DirectoryView<'_>, vk: bool) -> Vec<u32> {
     let mut keys = vec![widgets::TAB_KEY_HOME];
     keys.extend((0..directory.tab_count()).filter_map(|i| directory.tab_kind(i)).map(|kind| match kind {
         SecKind::Movie => widgets::TAB_KEY_MOVIES,
@@ -27,11 +27,13 @@ fn strip_keys(directory: DirectoryView<'_>) -> Vec<u32> {
     }));
     keys.push(widgets::TAB_KEY_WATCHLIST);
     keys.push(widgets::TAB_KEY_SEARCH);
+    if vk { keys.push(widgets::TAB_KEY_VK); }
     keys
 }
 
 pub(crate) fn pill_at(directory: DirectoryView<'_>, i: usize) -> Pill {
-    pill_in(i, &strip_keys(directory))
+    // The VK pill sits after every destination the maps name, so it moves none of their indices.
+    pill_in(i, &strip_keys(directory, false))
 }
 
 /// The destination a strip index names, by the KEY published at that index.
@@ -46,7 +48,7 @@ fn pill_in(i: usize, keys: &[u32]) -> Pill {
 }
 
 pub(crate) fn pill_of(directory: DirectoryView<'_>, pill: Pill) -> Option<usize> {
-    pill_index(pill, &strip_keys(directory))
+    pill_index(pill, &strip_keys(directory, false))
 }
 
 fn pill_index(pill: Pill, keys: &[u32]) -> Option<usize> {
@@ -74,9 +76,19 @@ pub(crate) struct ChromeSnapshot {
     name_w: f32,
     /// A pulse asked for and not yet handed to the strip's renderer: the destination key.
     pulse: Option<u32>,
+    /// Cinema Kids: the strip ends in the VK Video pill. Set once at boot.
+    vk: bool,
 }
 
 impl ChromeSnapshot {
+    /// Put the Kids-only VK Video pill on the strip (or take it off). Republishes the strip.
+    pub(crate) fn set_vk(&mut self, on: bool) {
+        if self.vk != on {
+            self.vk = on;
+            self.tabs_generation = None;
+        }
+    }
+
     /// **Pulse the strip destination `key`** (~1.35x scale and a glow, decorative): the Watchlist
     /// mark after a title was put on the list. The APPLICATION asks, never a screen; the bridge
     /// hands it to the strip's renderer on its next chrome update. A frame is requested so an
@@ -106,12 +118,13 @@ impl ChromeSnapshot {
         captured: Option<(&plx_plex::plex::session::CurrentProfile, &plx_plex::plex::session::Session)>) {
         let generation = directory.tabs_gen();
         if self.tabs_generation != Some(generation) {
-            self.keys = strip_keys(directory);
+            self.keys = strip_keys(directory, self.vk);
             self.faces = self.keys.iter().map(|&key| match key {
                 widgets::TAB_KEY_HOME => TabFace::Label(plx_platform::i18n::msg::browse_chrome_home().into()),
                 widgets::TAB_KEY_MOVIES => TabFace::Label(plx_platform::i18n::msg::browse_kind_movies().into()),
                 widgets::TAB_KEY_SHOWS => TabFace::Label(plx_platform::i18n::msg::browse_kind_tv_shows().into()),
                 widgets::TAB_KEY_WATCHLIST => TabFace::Icon(Icon::Bookmark),
+                widgets::TAB_KEY_VK => TabFace::Label(plx_platform::i18n::msg::browse_kids_vk_video().into()),
                 _ => TabFace::Icon(Icon::Search),
             }).collect();
             self.widths = widgets::tab_widths(&self.faces, measure);
@@ -297,12 +310,42 @@ mod tests {
     fn pill_maps_follow_the_published_strip_keys() {
         let directory = directory(&[SecKind::Movie, SecKind::Show]);
         let view = directory.view();
-        assert_eq!(strip_keys(view), vec![widgets::TAB_KEY_HOME, widgets::TAB_KEY_MOVIES,
+        assert_eq!(strip_keys(view, false), vec![widgets::TAB_KEY_HOME, widgets::TAB_KEY_MOVIES,
             widgets::TAB_KEY_SHOWS, widgets::TAB_KEY_WATCHLIST, widgets::TAB_KEY_SEARCH]);
         assert_eq!(pill_of(view, Pill::Watchlist), Some(3));
         assert_eq!(pill_of(view, Pill::Search), Some(4));
         assert_eq!(pill_at(view, 3), Pill::Watchlist);
         assert_eq!(pill_at(view, 4), Pill::Search);
+    }
+
+    #[test]
+    fn only_the_kids_strip_ends_in_the_vk_video_pill() {
+        let _serial = plx_base::testlock::serial();
+        let directory = directory(&[SecKind::Movie, SecKind::Show]);
+        let mut parents = ChromeSnapshot {
+            profile_generation: Some(plx_plex::plex::session::current_gen()), ..Default::default()
+        };
+        parents.refresh(&plx_ui::fixture::FixtureMeasure, directory.view());
+        assert!(!parents.keys.contains(&widgets::TAB_KEY_VK), "Parents and stable have no VK Video pill");
+        assert_eq!(parents.keys.last(), Some(&widgets::TAB_KEY_SEARCH));
+
+        let mut kids = ChromeSnapshot {
+            profile_generation: Some(plx_plex::plex::session::current_gen()), ..Default::default()
+        };
+        kids.set_vk(true);
+        kids.refresh(&plx_ui::fixture::FixtureMeasure, directory.view());
+        assert_eq!(kids.keys, vec![widgets::TAB_KEY_HOME, widgets::TAB_KEY_MOVIES, widgets::TAB_KEY_SHOWS,
+            widgets::TAB_KEY_WATCHLIST, widgets::TAB_KEY_SEARCH, widgets::TAB_KEY_VK],
+            "next to Search, after it, so no other destination moves");
+        assert_eq!(kids.faces.last(), Some(&TabFace::Label("VK Video".into())));
+        let mut members = Vec::new();
+        kids.members(0, None, 0.0, &mut members);
+        assert_eq!(members.last().map(|m| m.elem), Some(widgets::TAB_KEY_VK), "the strip's focus walk reaches it");
+        // Every pill map still reads the other destinations by identity, with the pill present.
+        assert_eq!(pill_of(directory.view(), Pill::Search), Some(4));
+        kids.set_vk(false);
+        kids.refresh(&plx_ui::fixture::FixtureMeasure, directory.view());
+        assert!(!kids.keys.contains(&widgets::TAB_KEY_VK));
     }
 
     #[test]

@@ -152,6 +152,7 @@ pub(crate) unsafe fn run(app: &mut App) {
         }
         plx_platform::tv::window::pump_bus();
         plx_platform::tv::home::poll();
+        if let Some(message) = app.bridge.poll_kids_video() { super::kids_vk::tell(message); }
         // The one toast key mode owes the viewer (`net::keypin`'s facts), on every route.
         clock_notice.poll();
         // What the hold hint has taught since last frame, written once to the install's session.
@@ -2410,6 +2411,7 @@ fn loop_requests(app: &mut App) {
             Err(req) => req,
         };
         match req {
+            plx_screens::registry::LoopReq::KidsVideo => { app.bridge.press_kids_video(); },
             plx_screens::registry::LoopReq::FamilyLaunch(index) => { if !app.family_home.as_mut().is_some_and(|home|home.launch_scene(index)) { if let Some(id)=app.family_home.as_ref().and_then(|home|home.application(index)) { if let Some(params)=app.family_home.as_ref().and_then(|home|home.application_params(index)) { plx_platform::tv::launch::application_with_params(id,params); } else { plx_platform::tv::launch::application(id); } } } },
             // BACK at a root the platform owns. The FIRST consent stage is the fourth such root
             // and the one the 2026-09-03 rule could not reach until this phase — see the key

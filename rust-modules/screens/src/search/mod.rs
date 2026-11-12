@@ -264,6 +264,7 @@ impl SearchScreen {
     fn activate<H: SearchLike>(&mut self, elem: u32, held: bool, cx: &Cx<'_, H>, fx: &mut Effects<'_, H>) -> Handled {
         use plx_ui::widgets::{TAB_KEY_CHIP, TAB_KEY_HOME, TAB_KEY_MOVIES, TAB_KEY_SEARCH, TAB_KEY_SHOWS, TAB_KEY_WATCHLIST};
         if elem >= plx_ui::dispatch::STRIP_BASE {
+            if crate::registry::strip_kids_video(elem, fx) { return Handled::Yes; }
             let request = match elem {
                 TAB_KEY_HOME => SearchReq::Tab(HomeTab::Home),
                 TAB_KEY_MOVIES => SearchReq::Tab(HomeTab::Movies),

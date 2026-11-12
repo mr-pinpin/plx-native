@@ -292,5 +292,7 @@
   "browse.clock.no_key": "Час на тэлевізары, здаецца, няправільны. Злучыце тэлевізар з інтэрнэтам адзін раз і паспрабуйце зноў.",
   "browse.clock.key_changed": "Ключ вашага сервера змяніўся. Злучыце тэлевізар з інтэрнэтам адзін раз, каб праграма магла праверыць яго зноў.",
   "browse.auth.local_server_unavailable": "Наладжаны лакальны сервер Plex не знойдзены.",
-  "browse.auth.local_configuration_invalid": "Налады лакальнага сервера недаступныя або няправільныя."
+  "browse.auth.local_configuration_invalid": "Налады лакальнага сервера недаступныя або няправільныя.",
+  "browse.kids.vk_video": "VK Video",
+  "browse.kids.vk_failed": "Не ўдалося адкрыць VK Video"
 }

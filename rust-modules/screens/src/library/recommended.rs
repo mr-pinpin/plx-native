@@ -874,6 +874,7 @@ impl RecommendedScreen {
         }
         use plx_ui::widgets::{TAB_KEY_CHIP, TAB_KEY_HOME, TAB_KEY_MOVIES, TAB_KEY_SEARCH, TAB_KEY_SHOWS, TAB_KEY_WATCHLIST};
         use crate::registry::HomeTab;
+        if crate::registry::strip_kids_video(elem, fx) { return Handled::Yes; }
         let req = match elem {
             TAB_KEY_HOME => Some(LibraryReq::Tab(HomeTab::Home)),
             TAB_KEY_MOVIES => Some(LibraryReq::Tab(HomeTab::Movies)),

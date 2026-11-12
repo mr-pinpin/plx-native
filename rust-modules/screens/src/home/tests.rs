@@ -5801,3 +5801,18 @@ fn a_caption_input_that_changes_under_a_kept_row_reaches_the_drawn_block() {
     assert_eq!(block(&remounted, &state, row, col), video);
     TEST_UNDER_POSTERS.with(|cell| cell.set(None));
 }
+
+#[test]
+fn the_vk_video_pill_is_not_a_tab_and_asks_the_application() {
+    let _guard = plx_base::testlock::serial();
+    let mut state = plx_data::pms::PmsState::default();
+    let adapter = std::sync::Arc::new(plx_data::pms::PmsAdapter::default());
+    plx_data::pms::seed_for_test(&mut state, &adapter, 3, plx_data::pms::HubState::Ready);
+    let snapshot = plx_data::pms::hubs_snapshot(&state);
+    let mut s = screen(snapshot.view());
+    assert_eq!(HomeScreen::request_for_strip(plx_ui::widgets::TAB_KEY_VK), None);
+    let (_, out, _) = step(&mut s, snapshot.view(), None, &ScreenEvent::Activate(plx_ui::widgets::TAB_KEY_VK));
+    assert!(out.iter().any(|st| matches!(&st.fx,
+        Fx::App(AppFx::Loop(crate::registry::LoopReq::KidsVideo)))));
+    assert!(!has_home(&out, |_| true), "no tab or account request rides along");
+}

@@ -1169,3 +1169,18 @@ fn the_header_row_is_built_once_per_key_not_once_per_question() {
     h.draw();
     assert_eq!(h.screen.probe_header_builds(), built + 1, "and the frames after it build none");
 }
+
+/// **The Kids "VK Video" pill asks the application and nothing else**: no tab request, no
+/// navigation, so BACK and focus stay exactly where they were (the strip keeps focus on it).
+#[test]
+fn a_press_on_the_vk_video_pill_asks_the_application_only() {
+    use plx_machine::machine::PressId;
+    use plx_ui::screen::By;
+    let mut h = Harness::new(tiles(3));
+    h.focus_elem(plx_ui::widgets::TAB_KEY_VK, By::Dir);
+    let (fx, _) = h.step_fx(plx_ui::screen::ScreenEvent::PressCommit(PressId(1)));
+    assert!(fx.iter().any(|e| matches!(&e.fx, plx_machine::machine::Fx::App(
+        crate::registry::AppFx::Loop(crate::registry::LoopReq::KidsVideo)))));
+    assert!(fx.iter().all(|e| !matches!(&e.fx, plx_machine::machine::Fx::Nav(_))));
+    assert!(requests(fx).is_empty());
+}

@@ -280,5 +280,7 @@
   "browse.clock.no_key": "L'orologio di questa TV sembra errato. Collega la TV a Internet una volta, poi riprova.",
   "browse.clock.key_changed": "La chiave del tuo server è cambiata. Collega la TV a Internet una volta per consentire all'app di verificarla di nuovo.",
   "browse.auth.local_server_unavailable": "Il server Plex locale configurato non è stato trovato.",
-  "browse.auth.local_configuration_invalid": "La configurazione del server locale non è disponibile o non è valida."
+  "browse.auth.local_configuration_invalid": "La configurazione del server locale non è disponibile o non è valida.",
+  "browse.kids.vk_video": "VK Video",
+  "browse.kids.vk_failed": "Impossibile aprire VK Video"
 }

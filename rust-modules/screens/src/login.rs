@@ -71,7 +71,7 @@ use plx_ui::widgets::{Button, CtlPop, Spinner, StatusKind, StatusOverlay};
 use plx_ui::{theme, Env, Painter, Rect, View};
 
 use super::plaintext_question::{self, PlaintextQuestion, connect};
-use super::registry::{word, AppFx, AppLike, AppMsg, AuthLike};
+use super::registry::{word, AppFx, AppLike, AppMsg, AuthLike, LoopReq};
 
 /// The screen's elements. The read-out's primary action and *Details* share [`CONTROL_GROUP`];
 /// the alert's answers — the report question's *Not now* / *Send report*, the Details card's
@@ -543,6 +543,9 @@ enum ControlKind {
     /// discovery with that same token and land on this same read-out. Starts a whole fresh sign-in
     /// (the same command as [`ControlKind::StartLogin`]) so a different account can be used.
     UseAnotherAccount,
+    /// Cinema Kids with no catalog to load (its local configuration is unavailable): the read-out's
+    /// one action opens the native VK Video application, since a retry cannot end differently.
+    KidsVideo,
 }
 
 fn label_for(kind: ControlKind) -> &'static CStr {
@@ -552,6 +555,7 @@ fn label_for(kind: ControlKind) -> &'static CStr {
         ControlKind::ContinueUnsaved => plx_platform::i18n::msg::settings_login_continue_unsaved_c(),
         ControlKind::ConnectPlaintext => connect(),
         ControlKind::UseAnotherAccount => plx_platform::i18n::msg::browse_action_use_another_account_c(),
+        ControlKind::KidsVideo => plx_platform::i18n::msg::browse_kids_vk_video_c(),
     }
 }
 
@@ -941,9 +945,17 @@ pub struct LoginScreen {
     ground: RouteGround,
     report: Report,
     state: LoginState,
+    /// This is Cinema Kids: the install that offers the VK Video action. Set by the mounter.
+    kids_video: bool,
 }
 
 impl LoginScreen {
+    /// Offer the Cinema Kids VK Video action on the unavailable-configuration read-out.
+    pub fn with_kids_video(mut self, on: bool) -> Self {
+        self.kids_video = on;
+        self
+    }
+
     pub fn new(entry: EntryId, auth: auth::SessionRead<'_>) -> Self {
         let mut s = Self {
             entry,
@@ -972,6 +984,7 @@ impl LoginScreen {
             question: PlaintextQuestion::new(),
             ground: RouteGround::new(),
             report: Report::new(),
+            kids_video: false,
             state: LoginState {
                 phase: 0,
                 qr_gen: 0,
@@ -1233,6 +1246,7 @@ impl LoginScreen {
         }
         match self.phase {
             Phase::Deleted => Some(ControlKind::StartLogin),
+            Phase::Error if self.kids_unavailable() => Some(ControlKind::KidsVideo),
             Phase::Error if self.plaintext_asks() => Some(ControlKind::ConnectPlaintext),
             Phase::Error if self.no_servers() => Some(ControlKind::UseAnotherAccount),
             Phase::Error => Some(ControlKind::Retry),
@@ -1242,6 +1256,12 @@ impl LoginScreen {
             }
             _ => None,
         }
+    }
+
+    /// Cinema Kids that could not load its local configuration or audience catalog: the boot's own
+    /// sentence is the error, and nothing the screen could retry changes it.
+    fn kids_unavailable(&self) -> bool {
+        self.kids_video && &*self.error == plx_platform::i18n::msg::browse_auth_local_configuration_invalid()
     }
 
     /// Whether the failure on screen is the no-server verdict: the account signed in and has
@@ -1378,6 +1398,7 @@ impl LoginScreen {
             ControlKind::ContinueUnsaved => true, // the warning sentence is unconditional
             ControlKind::ConnectPlaintext => true, // `auth::insecure_only_copy` always states one
             ControlKind::UseAnotherAccount => true, // the no-server reason is always stated
+            ControlKind::KidsVideo => true, // the unavailable-configuration reason is always stated
         };
         let details = self.details_offered().then_some(plx_platform::i18n::msg::settings_login_details_c());
         ([Some(label_for(kind)), details], has_reason)
@@ -1546,6 +1567,9 @@ impl LoginScreen {
             }
             Some(ControlKind::Retry) => {
                 fx.push(Fx::App(AppFx::Session(auth::SessionCmd::Retry)));
+            }
+            Some(ControlKind::KidsVideo) => {
+                fx.push(Fx::App(AppFx::Loop(LoopReq::KidsVideo)));
             }
             Some(ControlKind::ConnectPlaintext) => self.open_plaintext(fx),
             Some(ControlKind::RestartWait) => {
@@ -2803,6 +2827,7 @@ mod tests {
             plaintext: None,
             question: PlaintextQuestion::new(),
             ground: RouteGround::new(),
+            kids_video: false,
             report: Report::new(),
             state: LoginState {
                 phase: 0,
@@ -3191,6 +3216,36 @@ mod tests {
         assert_eq!(silent.control_kind(), Some(ControlKind::Retry));
         let (_, fx) = step_ev(&mut silent, &ScreenEvent::Activate(CONTROL));
         assert!(fx.iter().any(|st| matches!(st.fx, Fx::App(AppFx::Session(auth::SessionCmd::Retry)))));
+    }
+
+    fn kids_unavailable_screen(kids: bool) -> LoginScreen {
+        let mut s = bare_screen(Phase::Error, 0.0).with_kids_video(kids);
+        s.error = Arc::from(plx_platform::i18n::msg::browse_auth_local_configuration_invalid());
+        s
+    }
+
+    #[test]
+    fn kids_with_no_catalog_offers_vk_video_as_the_focused_primary_and_others_keep_retry() {
+        let mut kids = kids_unavailable_screen(true);
+        assert_eq!(kids.control_kind(), Some(ControlKind::KidsVideo));
+        assert_eq!(kids.row().as_slice(), &[CONTROL], "the one action is the first stop, so focus lands on it");
+        assert_eq!(label_for(ControlKind::KidsVideo).to_str().unwrap(), "VK Video");
+        let (_, fx) = step_ev(&mut kids, &ScreenEvent::Activate(CONTROL));
+        assert!(fx.iter().any(|st| matches!(st.fx, Fx::App(AppFx::Loop(LoopReq::KidsVideo)))));
+        assert!(!fx.iter().any(|st| matches!(st.fx, Fx::App(AppFx::Session(_)))),
+            "nothing is torn down or retried by the press");
+        // A second press asks again: the app's latch, not the screen, ignores it while in flight.
+        let (_, again) = step_ev(&mut kids, &ScreenEvent::Activate(CONTROL));
+        assert!(again.iter().any(|st| matches!(st.fx, Fx::App(AppFx::Loop(LoopReq::KidsVideo)))));
+        // Parents / stable / debug are not Kids: the same read-out keeps its Try again.
+        let mut parents = kids_unavailable_screen(false);
+        assert_eq!(parents.control_kind(), Some(ControlKind::Retry));
+        let (_, fx) = step_ev(&mut parents, &ScreenEvent::Activate(CONTROL));
+        assert!(!fx.iter().any(|st| matches!(st.fx, Fx::App(AppFx::Loop(_)))));
+        // Kids with some other failure keeps Try again too.
+        let mut other = bare_screen(Phase::Error, 0.0).with_kids_video(true);
+        other.error = Arc::from("something else");
+        assert_eq!(other.control_kind(), Some(ControlKind::Retry));
     }
 
     #[test]

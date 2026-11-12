@@ -409,6 +409,8 @@ pub(crate) struct Bridge {
     section_hubs: plx_data::stores::browse::HubsSnapshot,
     search: plx_data::stores::search::SearchSnapshot,
     chrome: super::chrome::ChromeSnapshot,
+    /// Cinema Kids' VK Video action; `None` on every other install.
+    kids_video: Option<super::kids_vk::KidsVideo>,
     chrome_selection: u32,
     /// The shared top bar's render state — the strip's scroll/capsules/chip unfurl and the tab
     /// track's glass band (restructure phase 12, PX-WIDGETS, review finding 10). `Bridge` is this
@@ -632,6 +634,7 @@ impl Bridge {
             section_hubs: reads.section_hubs,
             search: reads.search,
             chrome: super::chrome::ChromeSnapshot::default(),
+            kids_video: None,
             chrome_selection: 0,
             strip: plx_ui::widgets::StripRender::new(),
             home_commands: std::collections::VecDeque::new(),
@@ -664,6 +667,22 @@ impl Bridge {
             self.session_cache_generation = generation;
             plx_machine::idle::invalidate();
         }
+    }
+
+    /// Turn Cinema Kids' VK Video action on (the strip pill and the request) or off.
+    pub(crate) fn enable_kids_video(&mut self, on: bool) {
+        self.kids_video = on.then(Default::default);
+        self.chrome.set_vk(on);
+    }
+
+    /// A press on the VK Video action. Dropped on an install that does not carry it.
+    pub(crate) fn press_kids_video(&mut self) -> bool {
+        self.kids_video.as_mut().is_some_and(|vk| vk.press())
+    }
+
+    /// The frame's look at VK Video's launch reply: the failure words, when there are some.
+    pub(crate) fn poll_kids_video(&mut self) -> Option<String> {
+        self.kids_video.as_mut().and_then(|vk| vk.poll())
     }
 
     pub(crate) fn take_reqs(&mut self) -> Vec<LoopReq> {

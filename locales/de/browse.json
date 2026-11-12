@@ -268,5 +268,7 @@
   "browse.clock.no_key": "Die Uhr dieses Fernsehers scheint falsch zu gehen. Verbinde den Fernseher einmal mit dem Internet und versuche es erneut.",
   "browse.clock.key_changed": "Der Schlüssel deines Servers hat sich geändert. Verbinde den Fernseher einmal mit dem Internet, damit die App ihn neu prüfen kann.",
   "browse.auth.local_server_unavailable": "Der konfigurierte lokale Plex-Server wurde nicht gefunden.",
-  "browse.auth.local_configuration_invalid": "Die Konfiguration des lokalen Servers ist nicht verfügbar oder ungültig."
+  "browse.auth.local_configuration_invalid": "Die Konfiguration des lokalen Servers ist nicht verfügbar oder ungültig.",
+  "browse.kids.vk_video": "VK Video",
+  "browse.kids.vk_failed": "VK Video konnte nicht geöffnet werden"
 }

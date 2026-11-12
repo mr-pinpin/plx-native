@@ -1642,6 +1642,8 @@ pub(crate) unsafe fn construct(
         super::bridge::Bridge::new(plx_base::diag::heartbeat::now_us, session_init,
             plx_telemetry::telemetry::consent::current().unwrap_or_default(), &mt)
     };
+    // Cinema Kids alone carries the VK Video action; every other install is unchanged.
+    if !controlled { bridge.enable_kids_video(plx_plex::plex::audience::is_kids_install()); }
     // Construct the one dispatcher before bootstrap commands; move this same queue into App.
     let mut pages = plx_ui::dispatch::Dispatcher::with_transition(Box::new(
         plx_ui::containers::transition::PageDip::new(),
