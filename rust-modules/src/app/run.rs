@@ -150,9 +150,7 @@ pub(crate) unsafe fn run(app: &mut App) {
         if crate::dev::framedump::requested() {
             crate::dev::framedump::iteration_begin(app);
         }
-        plx_platform::tv::window::pump_bus();
-        plx_platform::tv::home::poll();
-        if let Some(message) = app.bridge.poll_kids_video() { super::kids_vk::tell(message); }
+        poll_platform(app);
         // The one toast key mode owes the viewer (`net::keypin`'s facts), on every route.
         clock_notice.poll();
         // What the hold hint has taught since last frame, written once to the install's session.
@@ -361,6 +359,15 @@ fn clock_and_press(app: &mut App, fr: &mut Frame) {
     // the profile chip is a stop on all three. It was `home_underlay_moving` while only Home
     // could be underneath. The account popover's glass re-snapshots off this.
     fr.underlay_moving = press_moving;
+}
+
+/// Drain platform callbacks before input, including the Kids launch completion.
+unsafe fn poll_platform(app: &mut App) {
+    plx_platform::tv::window::pump_bus();
+    plx_platform::tv::home::poll();
+    if let Some(message) = app.bridge.poll_kids_video() {
+        super::kids_vk::tell(message);
+    }
 }
 
 /// **The prepare window** (spec §3.3 steps 8-9, §8.1): the frame budget's own frame, the poster
