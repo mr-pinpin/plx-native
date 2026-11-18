@@ -4248,6 +4248,7 @@ pub fn update_guarded_with_outcome(
     let cur = session_of(&read);
     if cache_revoked() { return None; }
     if cur.client_id.is_empty() {
+        plx_base::eventlog::log("session: preference update refused: canonical identity unavailable");
         // Nothing readable to modify. Install this fresh truth anyway — it is what makes `peek()`
         // show a concurrent external change afterwards, exactly as an uncached re-read always did.
         install_locked(read);

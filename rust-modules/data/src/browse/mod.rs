@@ -2146,7 +2146,10 @@ impl BrowseState {
         let on: Vec<bool> = self.sections.iter().map(|section| section.pinned).collect();
         let user = plx_plex::plex::session::current_profile_key();
         let snapshot = plx_plex::plex::session::peek();
-        if snapshot.client_id.is_empty() { return None; }
+        if snapshot.client_id.is_empty() {
+            plx_base::eventlog::log("browse: library choice not queued: session identity unavailable");
+            return None;
+        }
         let previous = self.recorded.as_ref().or_else(|| snapshot.pins_for(&user));
         let answers = plx_plex::plex::pins::answers(&libraries, &on, touched, previous);
         let fresh = plx_plex::plex::pins::record(&user, asked, &libraries, &answers);
@@ -2165,7 +2168,8 @@ impl BrowseState {
             let mut next = session.clone();
             next.set_pins_for(&user, merged);
             Some(next)
-        }).ok()?;
+        }).map_err(|error| plx_base::eventlog::log(&format!(
+            "browse: library choice queue refused: {error:?}"))).ok()?;
         self.pending_pins = Some((pending_user, std::sync::Arc::new(std::sync::Mutex::new(PinWrite { ticket, saved: None }))));
         self.recorded = Some(record.clone());
         Some(record)

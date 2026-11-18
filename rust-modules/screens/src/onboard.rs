@@ -406,7 +406,7 @@ impl OnboardScreen {
             StoreId::Browse,
             StoreCmd::Browse(BrowseCmd::ApplyPins(self.answered())),
         )));
-        plx_base::eventlog::log(&format!("onboard: Home selection recorded — {on} of {total} libraries on"));
+        plx_base::eventlog::log(&format!("onboard: Home selection submitted — {on} of {total} libraries on"));
         self.leave(fx);
     }
 
